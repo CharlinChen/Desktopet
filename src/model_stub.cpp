@@ -18,6 +18,10 @@ class StubModel final : public Model {
   }
   void Load(const std::string&) override {}
   void Update(float dt) override { t_ += dt; }
+  void Resize(int width, int height) override {
+    meta_.canvas_w = width;
+    meta_.canvas_h = height;
+  }
   void Draw() override;
 
  private:

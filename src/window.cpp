@@ -63,6 +63,16 @@ void Window::Init(HINSTANCE hInstance, int width, int height) {
   // 帧图 BitBlt 到窗口 DC,品红区即透明。
   if (!SetLayeredWindowAttributes(hwnd_, kColorKey, 0, LWA_COLORKEY))
     Win32ErrorMessage("SetLayeredWindowAttributes failed", GetLastError());
+
+  // 注册 Raw Input 鼠标(滚轮)。RIDEV_INPUTSINK 让本窗口在无焦点(NOACTIVATE)
+  // 状态下也收到 WM_INPUT——滚轮缩放依赖它,不劫持其他窗口的鼠标事件。
+  RAWINPUTDEVICE rid{};
+  rid.usUsagePage = 0x01;  // 通用桌面
+  rid.usUsage = 0x02;      // 鼠标
+  rid.dwFlags = RIDEV_INPUTSINK;
+  rid.hwndTarget = hwnd_;
+  if (!RegisterRawInputDevices(&rid, 1, sizeof rid))
+    Win32ErrorMessage("RegisterRawInputDevices failed", GetLastError());
 }
 
 void Window::RunLoop() {
@@ -92,6 +102,12 @@ void Window::GetPos(int* x, int* y) {
   GetWindowRect(hwnd_, &r);
   *x = r.left;
   *y = r.top;
+}
+
+void Window::Resize(int width, int height) {
+  width_ = width;
+  height_ = height;
+  SetWindowPos(hwnd_, nullptr, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 POINT Window::CursorPos() const {
@@ -169,6 +185,26 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         self->drag_started_ = false;
       }
       return 0;
+
+    case WM_INPUT: {
+      // 滚轮输入(RIDEV_INPUTSINK):窗口无焦点也投递。只取鼠标滚轮 delta。
+      UINT size = 0;
+      GetRawInputData(reinterpret_cast<HRAWINPUT>(lp), RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
+      if (size == 0) return 0;
+      BYTE buf[sizeof(RAWINPUT)];
+      if (size > sizeof buf) return 0;
+      if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lp), RID_INPUT, buf, &size, sizeof(RAWINPUTHEADER)) != size)
+        return 0;
+      const RAWINPUT* raw = reinterpret_cast<const RAWINPUT*>(buf);
+      if (raw->header.dwType == RIM_TYPEMOUSE) {
+        const USHORT flags = raw->data.mouse.usButtonFlags;
+        if (flags & RI_MOUSE_WHEEL) {
+          const short delta = static_cast<short>(raw->data.mouse.usButtonData);
+          if (self->wheel_cb_) self->wheel_cb_(static_cast<int>(delta), self->wheel_user_);
+        }
+      }
+      return 0;
+    }
 
     case WM_KEYDOWN:
       if (self->key_cb_) self->key_cb_(static_cast<int>(wp), true, self->key_user_);

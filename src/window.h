@@ -30,6 +30,8 @@ class Window {
   // 窗口客户区尺寸(模型渲染目标尺寸,逻辑像素)
   int Width() const { return width_; }
   int Height() const { return height_; }
+  // 调整窗口尺寸(缩放用)。SWP_NOACTIVATE 保持不抢焦点。
+  void Resize(int width, int height);
 
   HWND Hwnd() const { return hwnd_; }
 
@@ -48,6 +50,12 @@ class Window {
   void SetDragCallback(void (*cb)(int x, int y, DragPhase phase, void* user), void* user) {
     drag_cb_ = cb;
     drag_user_ = user;
+  }
+  // 滚轮回调(经 WM_INPUT/RIDEV_INPUTSINK 接收,窗口无焦点时也投递)。
+  // delta > 0 向上滚,< 0 向下滚(通常为 ±120 的倍数)。
+  void SetWheelCallback(void (*cb)(int delta, void* user), void* user) {
+    wheel_cb_ = cb;
+    wheel_user_ = user;
   }
   // 键盘回调(down = 按下)。仅在有焦点时收到;本窗口 NOACTIVATE 常态无焦点,
   // Esc 退出在原型阶段通过临时激活窗口使用,正式版走托盘菜单。
@@ -72,6 +80,8 @@ class Window {
   void* mouse_user_ = nullptr;
   void (*drag_cb_)(int, int, DragPhase, void*) = nullptr;
   void* drag_user_ = nullptr;
+  void (*wheel_cb_)(int, void*) = nullptr;
+  void* wheel_user_ = nullptr;
   void (*key_cb_)(int, bool, void*) = nullptr;
   void* key_user_ = nullptr;
 

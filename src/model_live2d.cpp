@@ -598,6 +598,19 @@ void Live2DModel::Draw() {
   if (impl_) impl_->Draw();
 }
 
+void Live2DModel::Resize(int width, int height) {
+  meta_.canvas_w = width;
+  meta_.canvas_h = height;
+  if (!impl_) return;
+  impl_->canvas_w = width;
+  impl_->canvas_h = height;
+  // 更新渲染器视口尺寸:PreDraw() 每帧据此重设 viewport,矢量网格按新尺寸
+  // 高分辨率重绘(见 CubismRenderer_D3D11.cpp::PreDraw)。非 blend 模式下
+  // _modelRenderTargets 为空,无需重建;mask 缓冲固定 256,不受影响。
+  impl_->SetRenderTargetSize(static_cast<L2D::csmUint32>(width),
+                             static_cast<L2D::csmUint32>(height));
+}
+
 // ---------------- 工厂 ----------------
 
 std::unique_ptr<Model> CreateModel() { return std::make_unique<Live2DModel>(); }

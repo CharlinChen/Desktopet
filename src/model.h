@@ -29,6 +29,8 @@ class Model {
   virtual void Update(float dt) = 0;
   // 渲染到当前 RTV(需在 Renderer::Begin/End 之间)
   virtual void Draw() = 0;
+  // 画布/渲染目标尺寸变化时调用(缩放)。Live2D 为矢量网格,直接改尺寸即高分辨率重绘
+  virtual void Resize(int width, int height) = 0;
 
   const ModelMeta& Meta() const { return meta_; }
 

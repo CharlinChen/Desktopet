@@ -22,6 +22,7 @@ class Live2DModel final : public Model {
   void Load(const std::string& dir) override;
   void Update(float dt) override;
   void Draw() override;
+  void Resize(int width, int height) override;
 
   // 由 main 注入行为状态机(参数驱动:朝向/移动/兴奋)
   void SetBehavior(Behavior* behavior) { b_ = behavior; }

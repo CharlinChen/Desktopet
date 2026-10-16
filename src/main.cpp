@@ -44,6 +44,11 @@ static void DumpError(const char* what, const char* msg) {
 
 namespace {
 
+constexpr int kBaseSize = 400;       // 1x 时窗口边长(逻辑像素)
+constexpr float kMinZoom = 0.5f;
+constexpr float kMaxZoom = 2.0f;
+constexpr float kZoomStep = 0.1f;    // 每 120 滚轮增量缩放一档
+
 struct App {
   Window* win;
   Renderer* r;
@@ -53,8 +58,12 @@ struct App {
   std::uniform_real_distribution<float>* r01;
   int bottom_y;          // 工作区底边(屏幕坐标)
   int top_y = 0;         // 工作区顶边(屏幕坐标)
+  int work_left = 0;     // 工作区左/右边界(缩放后重算行为边界用)
+  int work_w = 1920;
   bool dragging = false;     // 用户正在拖动窗口
   bool pinned_bottom = true; // 拖拽前强制贴底;拖动后置 false,停在用户放置处
+  float zoom = 1.0f;
+  int wheel_accum = 0;       // 滚轮增量累加(高分辨率滚轮以 120 为满档)
   bool first_frame = true;
 };
 
@@ -119,6 +128,43 @@ void Key(int vk, bool down, void* user) {
   if (down && vk == VK_ESCAPE) a->win->RequestClose();
 }
 
+// 应用缩放:重算尺寸、保持窗口底边锚点不动、重建渲染目标与模型画布。
+static void ApplyZoom(App* a) {
+  const int size = static_cast<int>(kBaseSize * a->zoom + 0.5f);
+  int x = 0, y = 0;
+  a->win->GetPos(&x, &y);
+  const int old_bottom = y + a->win->Height();
+  const int new_y = old_bottom - size;
+
+  a->win->Resize(size, size);
+  a->win->Move(x, new_y);
+  a->r->Resize(size, size);
+  a->model->Resize(size, size);
+
+  // 行为边界按新窗口宽重算(爬行范围 = 工作区宽 - 窗口宽)
+  a->b->SetBounds(static_cast<float>(a->work_left),
+                  static_cast<float>(a->work_left + a->work_w - size));
+  a->b->x = std::clamp(a->b->x, static_cast<float>(a->work_left),
+                       static_cast<float>(a->work_left + a->work_w - size));
+  if (!a->pinned_bottom) {
+    a->b->y = std::clamp(static_cast<float>(new_y), static_cast<float>(a->top_y),
+                         static_cast<float>(a->bottom_y - size));
+  }
+}
+
+void Wheel(int delta, void* user) {
+  auto* a = static_cast<App*>(user);
+  a->wheel_accum += delta;
+  const int full = a->wheel_accum / 120;  // 满档数(高分辨率滚轮不足 120 时累积)
+  if (full == 0) return;
+  a->wheel_accum -= full * 120;
+
+  const float nz = std::clamp(a->zoom + full * kZoomStep, kMinZoom, kMaxZoom);
+  if (nz == a->zoom) return;
+  a->zoom = nz;
+  ApplyZoom(a);
+}
+
 }  // namespace
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
@@ -166,6 +212,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     App app{&win, &r, model.get(), &b, &rng, &r01, bottom_y};
     app.top_y = work.top;
+    app.work_left = work.left;
+    app.work_w = work_w;
 
 #ifdef HAVE_LIVE2D_SDK
     if (auto* l2d = dynamic_cast<Live2DModel*>(model.get())) l2d->SetBehavior(&b);
@@ -174,6 +222,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     win.SetFrameCallback(Frame, &app);
     win.SetMouseCallback(Mouse, &app);
     win.SetDragCallback(Drag, &app);
+    win.SetWheelCallback(Wheel, &app);
     win.SetKeyCallback(Key, &app);
 
     // 正式关闭通道:系统托盘右键「退出」。托盘不可用时静默降级(仍有 Esc 兜底)。
