@@ -38,8 +38,11 @@ namespace L2D = Live2D::Cubism::Framework;
 
 // ---------------- 基础工具 ----------------
 
+// 日志写到 exe 目录(ExeDir 定义见下,这里前置声明)
+static const std::string& ExeDir();
+
 static void LogLine(const char* what, const char* msg) {
-  FILE* f = fopen("E:/Project/Desktopet/live2d_error.log", "a");
+  FILE* f = fopen((ExeDir() + "live2d_error.log").c_str(), "a");
   if (f) {
     fprintf(f, "%s: %s\n", what, msg);
     fclose(f);
@@ -117,7 +120,7 @@ static L2D::csmByte* CubismLoadFile(const std::string path, L2D::csmSizeInt* out
 static void CubismReleaseBytes(L2D::csmByte* data) { CSM_FREE(data); }
 
 static void CubismLog(const char* msg) {
-  FILE* f = fopen("E:/Project/Desktopet/pet_live2d.log", "a");
+  FILE* f = fopen((ExeDir() + "pet_live2d.log").c_str(), "a");
   if (f) {
     fprintf(f, "%s\n", msg);
     fclose(f);

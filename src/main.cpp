@@ -13,9 +13,24 @@
 #include <chrono>
 #include <cstdio>
 #include <random>
+#include <string>
 
 static void DumpError(const char* what, const char* msg) {
-  FILE* f = fopen("E:/Project/Desktopet/startup_error.log", "a");
+  // 日志写 exe 目录(而非工作目录,启动方式无关)
+  wchar_t buf[MAX_PATH];
+  std::string log;
+  if (GetModuleFileNameW(nullptr, buf, MAX_PATH)) {
+    std::wstring w(buf);
+    const size_t pos = w.find_last_of(L"\\/");
+    if (pos != std::wstring::npos) {
+      char mb[MAX_PATH * 3];
+      const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(pos + 1), mb,
+                                        sizeof mb, nullptr, nullptr);
+      log.assign(mb, n);
+    }
+  }
+  log += "startup_error.log";
+  FILE* f = fopen(log.c_str(), "a");
   if (f) {
     fprintf(f, "%s: %s\n", what, msg);
     fclose(f);
