@@ -1,7 +1,9 @@
 #include "behavior.h"
 #include "model.h"
 #include "renderer.h"
+#include "singleton.h"
 #include "splash.h"
+#include "tray.h"
 #include "window.h"
 
 #ifdef HAVE_LIVE2D_SDK
@@ -72,6 +74,10 @@ void Key(int vk, bool down, void* user) {
 }  // namespace
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
+  // 单实例:第二个实例静默退出(命名互斥体,进程生命周期内持有)。
+  Singleton singleton;
+  if (!singleton.TryAcquire(L"DesktopetPet_Singleton")) return 0;
+
   // WIC 贴图加载需要 COM(WIC 工厂 CoCreateInstance 要求初始化公寓)
   CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   try {
@@ -119,6 +125,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     win.SetFrameCallback(Frame, &app);
     win.SetMouseCallback(Mouse, &app);
     win.SetKeyCallback(Key, &app);
+
+    // 正式关闭通道:系统托盘右键「退出」。托盘不可用时静默降级(仍有 Esc 兜底)。
+    TrayIcon tray;
+    tray.Init(win.Hwnd());
 
     win.RunLoop();
     r.Shutdown();

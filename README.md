@@ -39,7 +39,7 @@ cmake --build build
 
 ## 运行
 
-直接运行 exe:透明置顶窗口趴在屏幕底边,Haru 沿边爬行/发呆。点击宠物触发 Happy(张嘴),Esc 退出(调试阶段)。
+直接运行 exe:透明置顶窗口趴在屏幕底边,Haru 沿边爬行/发呆。点击宠物触发 Happy(张嘴)。**关闭方式:右下角系统托盘图标右键 →「退出」**(Esc 为调试阶段的临时退出,仅在窗口有焦点时可用)。托盘菜单同时提供「开机自启」开关,再次点击即可取消(写入/删除 `HKCU\...\Run\Desktopet`)。
 
 ## 目录结构
 
@@ -53,6 +53,9 @@ src/
   model_stub.cpp    占位方块模型(LIVE2D_REAL=OFF)
   behavior.h/.cpp   行为状态机
   splash.h/.cpp     首次启动"正在编译着色器"提示窗口(独立不透明,编译完关闭)
+  tray.h/.cpp       系统托盘图标 + 右键「退出」/「开机自启」菜单(正式关闭通道)
+  autostart.h/.cpp  开机自启(HKCU\...\Run 注册表值,可取消)
+  singleton.h       单实例锁(命名互斥体,重复启动静默退出)
 third_party/         Live2D SDK(Framework 源码 + Core 头/dll + MinGW 补丁)
 patches/             third_party 内 SDK 源码的补丁(着色器磁盘缓存,SDK 更新后需重新 apply)
 assets/              Haru 模型资源(model3.json/moc3/贴图/motion/物理)
@@ -73,7 +76,7 @@ build.bat
 
 - **跨 DPI 缩放**:窗口坐标目前按逻辑像素处理,多显示器混合 DPI 时需处理 `WM_DPICHANGED`(后续)。
 - **贴边行为**:目前固定贴屏幕底边,换边只动 x;顶/左/右贴边待完善。
-- **托盘/自启/单例**:未实现,后续按需添加。
+- **托盘/自启/单例**:托盘「右键退出」、开机自启(可取消)、单实例锁均已实现。
 - **内存目标 <60MB 验证**:未实测,后续用任务管理器核对。
 
 ## 授权说明

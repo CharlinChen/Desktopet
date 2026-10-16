@@ -20,6 +20,11 @@ add_executable(desktopet WIN32
   src/behavior.cpp
   src/splash.h
   src/splash.cpp
+  src/tray.h
+  src/tray.cpp
+  src/autostart.h
+  src/autostart.cpp
+  src/singleton.h
 )
 
 # ---- Live2D SDK 配置(通过 -D 传入)----
