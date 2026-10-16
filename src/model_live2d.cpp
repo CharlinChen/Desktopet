@@ -560,6 +560,13 @@ void Live2DModel::SetDevice(ID3D11Device* dev, ID3D11DeviceContext* ctx) {
     // CubismFramework 的 placement new,而它依赖 StartUp 传入的分配器。
     // 若先构造 Impl 再 StartUp,s_allocator 还是 NULL,构造即崩溃。
     EnsureCubismStarted();
+
+    // 着色器字节码磁盘缓存目录(exe 旁 ShaderCache/)。首次启动在此缓存编译结果,
+    // 之后跳过 ~500 次 D3DCompile 秒开。static 保证生命周期覆盖整个进程
+    // (Framework 的 SetCacheDirectory 只存指针不拷贝)。
+    static const std::string cacheDir = ExeDir() + "ShaderCache/";
+    L2D::Rendering::CubismShader_D3D11::SetCacheDirectory(cacheDir.c_str());
+
     impl_ = new Impl();
   }
   impl_->device = dev;
@@ -591,3 +598,7 @@ void Live2DModel::Draw() {
 // ---------------- 工厂 ----------------
 
 std::unique_ptr<Model> CreateModel() { return std::make_unique<Live2DModel>(); }
+
+bool Live2DShaderCacheNeedsCompile() {
+  return !L2D::Rendering::CubismShader_D3D11::IsCacheReady();
+}

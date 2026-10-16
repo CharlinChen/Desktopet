@@ -5,4 +5,5 @@ third_party/
 *.obj
 *.user
 .vscode/
+.idea/
 *.log

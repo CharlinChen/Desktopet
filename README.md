@@ -52,7 +52,9 @@ src/
   model_live2d.*    Live2D 模型(Cubism Framework 闭环:模型/贴图/运动/物理/呼吸/眨眼)
   model_stub.cpp    占位方块模型(LIVE2D_REAL=OFF)
   behavior.h/.cpp   行为状态机
-third_party/         Live2D SDK(Framework 源码 + Core 头/dll + 3 处 MinGW 补丁)
+  splash.h/.cpp     首次启动"正在编译着色器"提示窗口(独立不透明,编译完关闭)
+third_party/         Live2D SDK(Framework 源码 + Core 头/dll + MinGW 补丁)
+patches/             third_party 内 SDK 源码的补丁(着色器磁盘缓存,SDK 更新后需重新 apply)
 assets/              Haru 模型资源(model3.json/moc3/贴图/motion/物理)
 CMakeLists.txt
 build.bat
@@ -65,6 +67,7 @@ build.bat
 - **为什么不用 Electron/Tauri**:WebView2 进程基础开销 ~150MB,不满足轻量目标。
 - **为什么不用 Rust**:Live2D 无官方 Rust 绑定,FFI 封装成本高。
 - **MinGW × Live2D 补丁**(third_party 内):DirectXMath 头路径、XMMATRIX 结构体适配、常量缓冲 16 字节对齐(MSYS2 DirectXMath 的 XMFLOAT4X4 对齐为 4,D3D11 ByteWidth 必须 16 对齐)。
+- **着色器磁盘缓存**:首次启动把 Framework 运行时编译的 DXBC 缓存到 exe 旁 `ShaderCache/`,之后跳过 ~500 次 `D3DCompile` 秒开。SDK 源码补丁在 `patches/`,SDK 更新后 `git apply patches/*.patch`。
 
 ## 风险点 / 待办
 

@@ -1,6 +1,7 @@
 #include "behavior.h"
 #include "model.h"
 #include "renderer.h"
+#include "splash.h"
 #include "window.h"
 
 #ifdef HAVE_LIVE2D_SDK
@@ -89,7 +90,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     auto model = CreateModel();
     model->SetDevice(r.Device(), r.Context());
+
+    // 首次启动需现场编译着色器(~30s):显示提示窗口;缓存就绪后跳过。
+    // 提示窗口不依赖色键透明,编译发生在主窗口 Show 之前也能看见。
+    Splash splash;
+#ifdef HAVE_LIVE2D_SDK
+    if (Live2DShaderCacheNeedsCompile()) {
+      splash.Show(L"Desktopet 首次启动\n正在编译着色器,请稍候…");
+    }
+#endif
     model->Load("assets/Haru");  // Live2D 模型目录(model3.json 等)
+    splash.Hide();               // 未显示时为 no-op
 
     Behavior b;
     b.SetBounds(static_cast<float>(work.left), static_cast<float>(work.left + work_w - 400));

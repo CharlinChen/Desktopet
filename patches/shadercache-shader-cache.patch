@@ -1,0 +1,211 @@
+--- a/third_party/Framework/src/Rendering/D3D11/CubismShader_D3D11.hpp
++++ b/third_party/Framework/src/Rendering/D3D11/CubismShader_D3D11.hpp
+@@ -158,6 +158,23 @@
+      */
+     void BindShader(ID3D11DeviceContext* context);
+ 
++    /**
++     * @brief   Desktopet 扩展:设置着色器字节码(DXBC)磁盘缓存目录(UTF-8,以 '\\' 或 '/' 结尾)。
++     *          仅保存指针,调用方必须保证目录字符串在进程内有效。
++     *          置为 NULL 时关闭磁盘缓存(默认)。
++     *
++     * @param[in]   dir         缓存目录,或 NULL 关闭缓存
++     */
++    static void SetCacheDirectory(const csmChar* dir);
++
++    /**
++     * @brief   Desktopet 扩展:缓存是否已就绪(目录已设置且 sentinel 文件存在)。
++     *          就绪意味着所有着色器已成功编译并落盘,后续启动可跳过编译。
++     *
++     * @return  已就绪时为 true
++     */
++    static csmBool IsCacheReady();
++
+ private:
+     /**
+      * @brief   シェーダプログラムを初期化する
+--- a/third_party/Framework/src/Rendering/D3D11/CubismShader_D3D11.cpp
++++ b/third_party/Framework/src/Rendering/D3D11/CubismShader_D3D11.cpp
+@@ -9,9 +9,75 @@
+ #include "CubismRenderer_D3D11.hpp"
+ #include <d3dcompiler.h>
+ 
++#include <cstdio>
++#include <string>
++#include <windows.h>
++
+ //------------ LIVE2D NAMESPACE ------------
+ namespace Live2D { namespace Cubism { namespace Framework { namespace Rendering {
+ 
++namespace {
++
++// Desktopet 扩展:着色器字节码磁盘缓存。
++// 缓存 key = profile + entryPoint + FNV-1a(着色器源码),源码一变自动失效。
++// 全部编译成功后写 sentinel 文件作为"缓存就绪"标记,供上层决定是否显示启动提示。
++
++const csmChar* s_cacheDir = NULL;  // 由上层传入,仅存指针(不拷贝)
++
++// FNV-1a 32 位哈希(着色器源码摘要,非密码学用途)
++csmUint32 Fnv1a(const void* data, csmSizeInt len)
++{
++    const csmByte* p = static_cast<const csmByte*>(data);
++    csmUint32 h = 2166136261u;
++    for (csmSizeInt i = 0; i < len; ++i)
++    {
++        h ^= p[i];
++        h *= 16777619u;
++    }
++    return h;
++}
++
++// UTF-8 → 宽字符(Windows API 需要)。缓存目录/exe 路径可能含非 ASCII。
++std::wstring ToWide(const char* s)
++{
++    if (!s || !s[0]) return L"";
++    const int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
++    std::wstring w(static_cast<size_t>(n), L'\0');
++    MultiByteToWideChar(CP_UTF8, 0, s, -1, &w[0], n);
++    return w;
++}
++
++// 拼接缓存文件完整路径(dir + profile_entrypoint_hash.cso),返回宽字符
++std::wstring CachePath(const csmChar* profile, const csmChar* entryPoint, csmUint32 hash)
++{
++    std::string p = s_cacheDir;
++    p += profile;
++    p += "_";
++    p += (entryPoint && entryPoint[0]) ? entryPoint : "entry";
++    char hex[16];
++    std::snprintf(hex, sizeof hex, "_%08x.cso", hash);
++    p += hex;
++    return ToWide(p.c_str());
++}
++
++const char* SentinelName = "complete.marker";
++
++}  // namespace
++
++void CubismShader_D3D11::SetCacheDirectory(const csmChar* dir)
++{
++    s_cacheDir = dir;
++}
++
++csmBool CubismShader_D3D11::IsCacheReady()
++{
++    if (!s_cacheDir) return false;
++    std::string marker = s_cacheDir;
++    marker += SentinelName;
++    const DWORD attr = GetFileAttributesW(ToWide(marker.c_str()).c_str());
++    return attr != INVALID_FILE_ATTRIBUTES;
++}
++
+ void CubismShader_D3D11::ReleaseShaderProgram()
+ {
+     // 頂点レイアウト開放
+@@ -72,6 +138,12 @@
+     // 一旦開放
+     ReleaseShaderProgram();
+ 
++    // Desktopet 扩展:确保缓存目录存在(失败静默——缓存不可用时编译仍继续)
++    if (s_cacheDir)
++    {
++        CreateDirectoryW(ToWide(s_cacheDir).c_str(), NULL);
++    }
++
+     csmBool isSuccess = false;
+     do
+     {
+@@ -268,6 +340,20 @@
+         CSM_ASSERT(0);
+         return;
+     }
++
++    // Desktopet 扩展:全部编译成功 → 写 sentinel 标记缓存就绪。
++    // 下次启动 IsCacheReady() 返回 true,splash 不再显示。
++    if (s_cacheDir)
++    {
++        std::string marker = s_cacheDir;
++        marker += SentinelName;
++        HANDLE h = CreateFileW(ToWide(marker.c_str()).c_str(), GENERIC_WRITE, 0, NULL,
++                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++        if (h != INVALID_HANDLE_VALUE)
++        {
++            CloseHandle(h);
++        }
++    }
+ }
+ 
+ csmBool CubismShader_D3D11::LoadShaderProgram(ID3D11Device* device, bool isPs, csmInt32 assign, const csmChar* entryPoint, const csmString& shaderSrc, csmBool isFormat)
+@@ -293,23 +379,48 @@
+         compileFlag |= D3DCOMPILE_DEBUG;
+ #endif
+ 
+-        hr = D3DCompile(
+-            shaderSrc.GetRawString(),           // メモリー内のシェーダーへのポインターです。
+-            shaderSrc.GetLength(),              // メモリー内のシェーダーのサイズです。
+-            NULL,                               // シェーダー コードが格納されているファイルの名前です。
+-            NULL,                               // マクロ定義の配列へのポインターです
+-            NULL,                               // インクルード ファイルを扱うインターフェイスへのポインターです
+-            entryPoint,                         // シェーダーの実行が開始されるシェーダー エントリポイント関数の名前です。
+-            isPs ? "ps_4_0" : "vs_4_0",         // シェーダー モデルを指定する文字列。
+-            compileFlag,                        // シェーダーコンパイルフラグ
+-            0,                                  // シェーダーエフェクトのフラグ
+-            &vertexBlob,
+-            &errorBlob);              // エラーが出る場合はここで
+-        if (FAILED(hr))
++        const csmChar* profile = isPs ? "ps_4_0" : "vs_4_0";
++
++        // Desktopet 扩展:先尝试从磁盘缓存读编译好的 DXBC。
++        // 命中则跳过 D3DCompile(首次启动 30s 的大头),未命中则编译后落盘。
++        const csmUint32 srcHash = Fnv1a(shaderSrc.GetRawString(), shaderSrc.GetLength());
++        const std::wstring cacheFile = s_cacheDir ? CachePath(profile, entryPoint, srcHash) : std::wstring();
++        ID3DBlob* cachedBlob = NULL;
++        if (!cacheFile.empty())
+         {
+-            CubismLogWarning("Fail Compile Shader : %s", entryPoint == NULL ? "" : entryPoint);
+-            break;
++            if (SUCCEEDED(D3DReadFileToBlob(cacheFile.c_str(), &cachedBlob)) && cachedBlob)
++            {
++                vertexBlob = cachedBlob;
++            }
++        }
++
++        if (!vertexBlob)
++        {
++            hr = D3DCompile(
++                shaderSrc.GetRawString(),           // メモリー内のシェーダーへのポインターです。
++                shaderSrc.GetLength(),              // メモリー内のシェーダーのサイズです。
++                NULL,                               // シェーダー コードが格納されているファイルの名前です。
++                NULL,                               // マクロ定義の配列へのポインターです
++                NULL,                               // インクルード ファイルを扱うインターフェイスへのポインターです
++                entryPoint,                         // シェーダーの実行が開始されるシェーダー エントリポイント関数の名前です。
++                profile,                            // シェーダー モデルを指定する文字列。
++                compileFlag,                        // シェーダーコンパイルフラグ
++                0,                                  // シェーダーエフェクトのフラグ
++                &vertexBlob,
++                &errorBlob);              // エラーが出る場合はここで
++            if (FAILED(hr))
++            {
++                CubismLogWarning("Fail Compile Shader : %s", entryPoint == NULL ? "" : entryPoint);
++                break;
++            }
++
++            // 编译成功 → 落盘缓存(失败静默回退,不阻断;兼容只读目录)
++            if (!cacheFile.empty())
++            {
++                D3DWriteBlobToFile(vertexBlob, cacheFile.c_str(), TRUE);
++            }
+         }
++
+         hr = isPs ? device->CreatePixelShader(vertexBlob->GetBufferPointer(), vertexBlob->GetBufferSize(), NULL, &pixelShader)
+                   : device->CreateVertexShader(vertexBlob->GetBufferPointer(), vertexBlob->GetBufferSize(), NULL, &vertexShader);
+         if (FAILED(hr))
+@@ -396,4 +507,6 @@
+ }
+ 
+ }}}}
+-//------------ LIVE2D NAMESPACE ------------
+\ No newline at end of file
++
++//------------ LIVE2D NAMESPACE ------------
++

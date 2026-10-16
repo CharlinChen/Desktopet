@@ -11,6 +11,9 @@ struct Behavior;
 // 加载/绘制失败的错误输出(工程目录下 live2d_error.log)
 void LogLive2dError(const char* what, const char* msg);
 
+// 着色器字节码缓存是否尚未就绪(需要首次编译)。供 main 决定是否显示启动提示。
+bool Live2DShaderCacheNeedsCompile();
+
 class Live2DModel final : public Model {
  public:
   ~Live2DModel() override;
