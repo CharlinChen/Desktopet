@@ -10,6 +10,7 @@
 #include "model_live2d.h"
 #endif
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <random>
@@ -50,7 +51,10 @@ struct App {
   Behavior* b;
   std::mt19937* rng;
   std::uniform_real_distribution<float>* r01;
-  int bottom_y;  // 屏幕坐标系的底边 y
+  int bottom_y;          // 工作区底边(屏幕坐标)
+  int top_y = 0;         // 工作区顶边(屏幕坐标)
+  bool dragging = false;     // 用户正在拖动窗口
+  bool pinned_bottom = true; // 拖拽前强制贴底;拖动后置 false,停在用户放置处
   bool first_frame = true;
 };
 
@@ -63,11 +67,14 @@ void Frame(float dt, void* user) {
     a->b->ResetClock();
   }
 
-  a->b->MaybeSwitch((*a->r01)(*a->rng));
-  a->b->Update(dt);
-
-  // 窗口跟随行为位置(贴底边;换边逻辑后续按 edge 处理 y)
-  a->win->Move(static_cast<int>(a->b->x), a->bottom_y - a->win->Height());
+  // 拖动中:位置由 Window 的拖拽逻辑接管,暂停行为状态机(避免自动爬行抢位置)
+  if (!a->dragging) {
+    a->b->MaybeSwitch((*a->r01)(*a->rng));
+    a->b->Update(dt);
+    const int y = a->pinned_bottom ? (a->bottom_y - a->win->Height())
+                                   : static_cast<int>(a->b->y);
+    a->win->Move(static_cast<int>(a->b->x), y);
+  }
 
   // 模型动画参数 → 渲染
   a->model->Update(dt);
@@ -79,6 +86,32 @@ void Frame(float dt, void* user) {
 void Mouse(bool down, int, int, void* user) {
   auto* a = static_cast<App*>(user);
   if (down) a->b->OnClick();
+}
+
+// 拖拽回调:窗口位置已由 Window 内部 Move,这里只同步行为层坐标。
+// Begin → Move* → End;End 后脱离贴底,宠物停在用户放置处继续原有行为。
+void Drag(int x, int y, DragPhase phase, void* user) {
+  auto* a = static_cast<App*>(user);
+  switch (phase) {
+    case DragPhase::Begin:
+      a->dragging = true;
+      a->b->state = Behavior::State::Idle;  // 打断当前爬行
+      break;
+    case DragPhase::Move:
+      a->b->x = static_cast<float>(x);
+      a->b->y = static_cast<float>(y);
+      break;
+    case DragPhase::End: {
+      a->dragging = false;
+      a->pinned_bottom = false;
+      // 钳制到工作区内,避免拖出可视范围
+      const int h = a->win->Height();
+      a->b->x = static_cast<float>(x);
+      a->b->y = static_cast<float>(std::clamp(y, a->top_y, a->bottom_y - h));
+      a->b->state = Behavior::State::Idle;
+      break;
+    }
+  }
 }
 
 void Key(int vk, bool down, void* user) {
@@ -132,6 +165,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     std::uniform_real_distribution<float> r01(0.f, 1.f);
 
     App app{&win, &r, model.get(), &b, &rng, &r01, bottom_y};
+    app.top_y = work.top;
 
 #ifdef HAVE_LIVE2D_SDK
     if (auto* l2d = dynamic_cast<Live2DModel*>(model.get())) l2d->SetBehavior(&b);
@@ -139,6 +173,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     win.SetFrameCallback(Frame, &app);
     win.SetMouseCallback(Mouse, &app);
+    win.SetDragCallback(Drag, &app);
     win.SetKeyCallback(Key, &app);
 
     // 正式关闭通道:系统托盘右键「退出」。托盘不可用时静默降级(仍有 Esc 兜底)。

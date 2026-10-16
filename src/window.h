@@ -7,6 +7,9 @@ struct WindowInitError {
   const char* msg;
 };
 
+// 拖拽回调的阶段
+enum class DragPhase { Begin, Move, End };
+
 class Window {
  public:
   Window() = default;
@@ -35,10 +38,16 @@ class Window {
     frame_cb_ = cb;
     frame_user_ = user;
   }
-  // 传入的鼠标回调。down: 左键按下;x/y: 客户区坐标
+  // 点击回调:按下并原地释放(未越过拖动阈值)时触发,down 恒为 true。
   void SetMouseCallback(void (*cb)(bool down, int x, int y, void* user), void* user) {
     mouse_cb_ = cb;
     mouse_user_ = user;
+  }
+  // 拖拽回调:x/y 为窗口新左上角(屏幕坐标);phase 依次 Begin → Move* → End。
+  // 拖拽期间窗口位置已由 Window 内部 Move,回调只需同步行为层坐标。
+  void SetDragCallback(void (*cb)(int x, int y, DragPhase phase, void* user), void* user) {
+    drag_cb_ = cb;
+    drag_user_ = user;
   }
   // 键盘回调(down = 按下)。仅在有焦点时收到;本窗口 NOACTIVATE 常态无焦点,
   // Esc 退出在原型阶段通过临时激活窗口使用,正式版走托盘菜单。
@@ -51,7 +60,7 @@ class Window {
 
  private:
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
-  void HandleMouse(bool down, LPARAM lp);
+  POINT CursorPos() const;
 
   HWND hwnd_ = nullptr;
   int width_ = 0;
@@ -61,6 +70,15 @@ class Window {
   void* frame_user_ = nullptr;
   void (*mouse_cb_)(bool, int, int, void*) = nullptr;
   void* mouse_user_ = nullptr;
+  void (*drag_cb_)(int, int, DragPhase, void*) = nullptr;
+  void* drag_user_ = nullptr;
   void (*key_cb_)(int, bool, void*) = nullptr;
   void* key_user_ = nullptr;
+
+  // 拖拽状态:按下时的光标/窗口位置,以及是否已越过拖动阈值
+  POINT drag_grab_cursor_{};
+  POINT drag_grab_win_{};
+  POINT drag_cursor_{};
+  bool drag_active_ = false;    // 左键按住(尚未判定点击/拖动)
+  bool drag_started_ = false;   // 已越过阈值,确认为拖动
 };

@@ -1,11 +1,13 @@
 #include "window.h"
 
 #include <cstdio>
+#include <cstdlib>
 
 namespace {
 
 constexpr wchar_t kClassName[] = L"DesktopetPetWindow";
 constexpr COLORREF kColorKey = RGB(255, 0, 255);  // 品红:色键透明
+constexpr int kDragThreshold = 4;  // 光标移动超过 4px 才判定为拖动(否则是点击)
 
 LARGE_INTEGER g_qpcFreq;
 
@@ -92,6 +94,12 @@ void Window::GetPos(int* x, int* y) {
   *y = r.top;
 }
 
+POINT Window::CursorPos() const {
+  POINT p{};
+  GetCursorPos(&p);
+  return p;
+}
+
 LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   auto* self = reinterpret_cast<Window*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   if (msg == WM_NCCREATE) {
@@ -113,11 +121,53 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       }
       return 0;
 
-    case WM_LBUTTONDOWN:
-      self->HandleMouse(true, lp);
+    case WM_LBUTTONDOWN: {
+      // 记录抓取点;先捕获鼠标,拖动是否成立由 WM_MOUSEMOVE 按阈值判定
+      self->drag_active_ = true;
+      self->drag_started_ = false;
+      self->drag_grab_cursor_ = self->CursorPos();
+      self->drag_cursor_ = self->drag_grab_cursor_;
+      int gx = 0, gy = 0;
+      self->GetPos(&gx, &gy);
+      self->drag_grab_win_.x = gx;
+      self->drag_grab_win_.y = gy;
+      SetCapture(hwnd);
+      return 0;
+    }
+    case WM_MOUSEMOVE:
+      if (self->drag_active_) {
+        self->drag_cursor_ = self->CursorPos();
+        if (!self->drag_started_) {
+          const int dx = self->drag_cursor_.x - self->drag_grab_cursor_.x;
+          const int dy = self->drag_cursor_.y - self->drag_grab_cursor_.y;
+          if (abs(dx) < kDragThreshold && abs(dy) < kDragThreshold) return 0;  // 还没越过阈值
+          self->drag_started_ = true;
+          if (self->drag_cb_)
+            self->drag_cb_(self->drag_grab_win_.x, self->drag_grab_win_.y, DragPhase::Begin, self->drag_user_);
+        }
+        const int nx = self->drag_grab_win_.x + (self->drag_cursor_.x - self->drag_grab_cursor_.x);
+        const int ny = self->drag_grab_win_.y + (self->drag_cursor_.y - self->drag_grab_cursor_.y);
+        self->Move(nx, ny);
+        if (self->drag_cb_) self->drag_cb_(nx, ny, DragPhase::Move, self->drag_user_);
+      }
       return 0;
     case WM_LBUTTONUP:
-      self->HandleMouse(false, lp);
+      if (self->drag_active_) {
+        self->drag_active_ = false;
+        ReleaseCapture();
+        if (self->drag_started_) {
+          // 拖拽结束:上报最终位置
+          const int nx = self->drag_grab_win_.x + (self->drag_cursor_.x - self->drag_grab_cursor_.x);
+          const int ny = self->drag_grab_win_.y + (self->drag_cursor_.y - self->drag_grab_cursor_.y);
+          if (self->drag_cb_) self->drag_cb_(nx, ny, DragPhase::End, self->drag_user_);
+        } else {
+          // 未越过阈值:视为点击
+          const int cx = static_cast<int>(static_cast<short>(LOWORD(lp)));
+          const int cy = static_cast<int>(static_cast<short>(HIWORD(lp)));
+          if (self->mouse_cb_) self->mouse_cb_(true, cx, cy, self->mouse_user_);
+        }
+        self->drag_started_ = false;
+      }
       return 0;
 
     case WM_KEYDOWN:
@@ -135,11 +185,4 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
   }
   return DefWindowProcW(hwnd, msg, wp, lp);
-}
-
-void Window::HandleMouse(bool down, LPARAM lp) {
-  if (!mouse_cb_) return;
-  const int x = static_cast<int>(static_cast<short>(LOWORD(lp)));
-  const int y = static_cast<int>(static_cast<short>(HIWORD(lp)));
-  mouse_cb_(down, x, y, mouse_user_);
 }
