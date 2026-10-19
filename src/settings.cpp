@@ -97,3 +97,28 @@ void Settings::SetMouseFollow(bool on) {
   S().kv["mouse_follow"] = on ? "1" : "0";
   SaveNow();
 }
+
+bool Settings::Wander() {
+  LoadOnce();
+  const auto it = S().kv.find("wander");
+  // 缺省(键不存在)视为开启:保持宠物会动的默认行为,只把显式写 "0" 当作关闭。
+  return it == S().kv.end() || it->second == "1";
+}
+
+void Settings::SetWander(bool on) {
+  LoadOnce();
+  S().kv["wander"] = on ? "1" : "0";
+  SaveNow();
+}
+
+bool Settings::RandomAnimation() {
+  LoadOnce();
+  const auto it = S().kv.find("random_animation");
+  return it == S().kv.end() || it->second == "1";
+}
+
+void Settings::SetRandomAnimation(bool on) {
+  LoadOnce();
+  S().kv["random_animation"] = on ? "1" : "0";
+  SaveNow();
+}

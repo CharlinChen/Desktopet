@@ -237,6 +237,26 @@ void MouseFollowToggle(void* user) {
   if (a->tray) a->tray->SetMouseFollow(a->b->follow_mouse);
 }
 
+// 托盘「设置 → 随机移动」切换:翻转内存态并回写托盘打勾态。
+void WanderToggle(void* user) {
+  auto* a = static_cast<App*>(user);
+  a->b->wander = !a->b->wander;
+  if (!a->b->wander) {
+    // 切到静止:打断当前爬行,停在原地。
+    a->b->state = Behavior::State::Idle;
+    a->b->is_moving = false;
+  }
+  if (a->tray) a->tray->SetWander(a->b->wander);
+}
+
+// 托盘「设置 → 随机动画」切换:翻转内存态并回写托盘打勾态。
+// 模型层每帧读 b->random_animation,切关时 StopAllMotions 并复位参数,无需额外处理。
+void RandomAnimationToggle(void* user) {
+  auto* a = static_cast<App*>(user);
+  a->b->random_animation = !a->b->random_animation;
+  if (a->tray) a->tray->SetRandomAnimation(a->b->random_animation);
+}
+
 }  // namespace
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
@@ -286,6 +306,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     b.x = static_cast<float>(work.left + (work_w - 400) / 2);  // 与窗口初始位置同步
     b.y = static_cast<float>(bottom_y - 400);
     b.follow_mouse = Settings::MouseFollow();  // 启动即读取 cfg
+    b.wander = Settings::Wander();             // 启动即读取 cfg
+    b.random_animation = Settings::RandomAnimation();  // 启动即读取 cfg
 
     std::mt19937 rng(12345u);
     std::uniform_real_distribution<float> r01(0.f, 1.f);
@@ -295,6 +317,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     tray.Init(win.Hwnd());
     tray.SetCurrentModel(current);
     tray.SetMouseFollow(b.follow_mouse);  // 初始打勾态与 cfg 一致
+    tray.SetWander(b.wander);             // 初始打勾态与 cfg 一致
+    tray.SetRandomAnimation(b.random_animation);  // 初始打勾态与 cfg 一致
 
     App app{};
     app.win = &win;
@@ -321,6 +345,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     win.SetKeyCallback(Key, &app);
     win.SetModelSwitchCallback(ModelSwitch, &app);
     win.SetMouseFollowToggleCallback(MouseFollowToggle, &app);
+    win.SetWanderToggleCallback(WanderToggle, &app);
+    win.SetRandomAnimationToggleCallback(RandomAnimationToggle, &app);
 
     win.RunLoop();
     r.Shutdown();

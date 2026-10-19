@@ -20,6 +20,10 @@ class TrayIcon {
   void SetCurrentModel(const std::string& name) { current_model_ = name; }
   // 鼠标追随开关的内存态(托盘菜单打勾用)。main 启动/切换后回写。
   void SetMouseFollow(bool on) { mouse_follow_ = on; }
+  // 随机移动开关的内存态(托盘菜单打勾用)。
+  void SetWander(bool on) { wander_ = on; }
+  // 随机动画开关的内存态(托盘菜单打勾用)。
+  void SetRandomAnimation(bool on) { random_animation_ = on; }
 
  private:
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -30,6 +34,8 @@ class TrayIcon {
   static constexpr UINT kCmdQuit = 1;
   static constexpr UINT kCmdAutostart = 2;
   static constexpr UINT kCmdMouseFollow = 3;
+  static constexpr UINT kCmdWander = 4;
+  static constexpr UINT kCmdRandomAnimation = 5;
   static constexpr UINT kCmdModelBase = 100;  // 模型菜单项 ID 从 100 起(下标 = id - base)
 
   HWND hwnd_ = nullptr;     // 隐藏的托盘回调窗口
@@ -37,6 +43,8 @@ class TrayIcon {
   HICON icon_ = nullptr;    // 需在 NIM_DELETE 前保持有效
   bool added_ = false;
   bool mouse_follow_ = false;         // 鼠标追随开关内存态(打勾)
+  bool wander_ = true;                // 随机移动开关内存态(打勾)
+  bool random_animation_ = true;      // 随机动画开关内存态(打勾)
   std::vector<std::string> models_;  // 当前模型目录名(弹出菜单时刷新)
   std::string current_model_;        // 已选中模型目录名(打勾)
 };

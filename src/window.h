@@ -75,6 +75,16 @@ class Window {
     mousefollow_cb_ = cb;
     mousefollow_user_ = user;
   }
+  // 随机移动开关回调(托盘「设置」项投递 kWanderToggleMsg 时触发)。
+  void SetWanderToggleCallback(void (*cb)(void* user), void* user) {
+    wander_cb_ = cb;
+    wander_user_ = user;
+  }
+  // 随机动画开关回调(托盘「设置」项投递 kRandomAnimationToggleMsg 时触发)。
+  void SetRandomAnimationToggleCallback(void (*cb)(void* user), void* user) {
+    random_animation_cb_ = cb;
+    random_animation_user_ = user;
+  }
   // 请求关闭窗口(消息循环结束后 RunLoop 返回)
   void RequestClose() { PostMessage(hwnd_, WM_CLOSE, 0, 0); }
 
@@ -105,6 +115,10 @@ class Window {
   void* modelswitch_user_ = nullptr;
   void (*mousefollow_cb_)(void*) = nullptr;
   void* mousefollow_user_ = nullptr;
+  void (*wander_cb_)(void*) = nullptr;
+  void* wander_user_ = nullptr;
+  void (*random_animation_cb_)(void*) = nullptr;
+  void* random_animation_user_ = nullptr;
 
   // 拖拽状态:按下时的光标/窗口位置,以及是否已越过拖动阈值
   POINT drag_grab_cursor_{};

@@ -78,10 +78,14 @@ void TrayIcon::ShowMenu() {
   }
   AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(models), L"切换模型");
 
-  // 二级菜单「设置」:当前仅鼠标追随一项。
+  // 二级菜单「设置」。
   HMENU settings = CreatePopupMenu();
   AppendMenuW(settings, MF_STRING | (mouse_follow_ ? MF_CHECKED : 0), kCmdMouseFollow,
               L"鼠标追随");
+  AppendMenuW(settings, MF_STRING | (wander_ ? MF_CHECKED : 0), kCmdWander,
+              L"随机移动");
+  AppendMenuW(settings, MF_STRING | (random_animation_ ? MF_CHECKED : 0), kCmdRandomAnimation,
+              L"随机动画");
   AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(settings), L"设置");
 
   AppendMenuW(menu, MF_STRING, kCmdAutostart,
@@ -191,6 +195,16 @@ LRESULT CALLBACK TrayIcon::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           self->mouse_follow_ = !self->mouse_follow_;
           Settings::SetMouseFollow(self->mouse_follow_);
           if (self->cb_wnd_) PostMessage(self->cb_wnd_, kMouseFollowToggleMsg, 0, 0);
+          return 0;
+        case kCmdWander:
+          self->wander_ = !self->wander_;
+          Settings::SetWander(self->wander_);
+          if (self->cb_wnd_) PostMessage(self->cb_wnd_, kWanderToggleMsg, 0, 0);
+          return 0;
+        case kCmdRandomAnimation:
+          self->random_animation_ = !self->random_animation_;
+          Settings::SetRandomAnimation(self->random_animation_);
+          if (self->cb_wnd_) PostMessage(self->cb_wnd_, kRandomAnimationToggleMsg, 0, 0);
           return 0;
         case kCmdAutostart:
           AutoStart::SetEnabled(!AutoStart::IsEnabled());

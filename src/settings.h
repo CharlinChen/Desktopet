@@ -16,7 +16,19 @@ void SetModelName(const std::string& name);
 bool MouseFollow();
 void SetMouseFollow(bool on);
 
+// 随机移动开关(沿边爬行)。默认开启;关闭后宠物静止,只保留眨眼/待机动画与点击互动。
+bool Wander();
+void SetWander(bool on);
+
+// 随机动画开关(随机 Idle 动作)。默认开启;关闭后原地完全静止,仅眨眼/呼吸/鼠标追随。
+bool RandomAnimation();
+void SetRandomAnimation(bool on);
+
 }  // namespace Settings
 
 // 托盘切换「鼠标追随」后投递到主窗口的消息(主窗口据此翻转内存态,避免每帧读盘)。
 constexpr UINT kMouseFollowToggleMsg = WM_APP + 3;
+// 托盘切换「随机移动」后投递到主窗口的消息。
+constexpr UINT kWanderToggleMsg = WM_APP + 4;
+// 托盘切换「随机动画」后投递到主窗口的消息。
+constexpr UINT kRandomAnimationToggleMsg = WM_APP + 5;

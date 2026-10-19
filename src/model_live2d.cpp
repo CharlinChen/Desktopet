@@ -504,7 +504,15 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
     GetModel()->LoadParameters();
 
     // 运动:空闲随机循环。点击的 Happy 动画直接走行为参数驱动,不占用运动。
-    if (_motionManager->IsFinished()) {
+    // 「随机动画」关闭时:停止一切动作,并把全部参数重置回模型默认值(中性姿势),
+    // 让宠物原地完全静止——后续只剩眨眼/呼吸/鼠标追随继续叠加。
+    // b==null(无行为层)走原逻辑,不受影响。
+    if (b && !b->random_animation) {
+      _motionManager->StopAllMotions();
+      for (L2D::csmInt32 i = 0; i < GetModel()->GetParameterCount(); ++i) {
+        GetModel()->SetParameterValue(i, GetModel()->GetParameterDefaultValue(i), 1.f);
+      }
+    } else if (_motionManager->IsFinished()) {
       idle_restart_timer -= dt;
       if (idle_restart_timer <= 0.f) {
         StartRandomIdle();
@@ -543,8 +551,8 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
       if (id_eye_ball_x) GetModel()->AddParameterValue(id_eye_ball_x, b->look_x, 0.5f);
       if (id_eye_ball_y) GetModel()->AddParameterValue(id_eye_ball_y, b->look_y, 0.5f);
       // 头随光标:左右看映射到 ParamAngleY,俯仰映射到 ParamAngleX。方向与官方样例一致。
-      if (id_angle_x) GetModel()->SetParameterValue(id_angle_x, b->look_y * 10.f, 0.5f);
-      if (id_angle_y) GetModel()->SetParameterValue(id_angle_y, b->look_x * 15.f, 0.5f);
+      if (id_angle_x) GetModel()->SetParameterValue(id_angle_x, b->look_y * 20.f, 1.0f);
+      if (id_angle_y) GetModel()->SetParameterValue(id_angle_y, b->look_x * 20.f, 1.0f);
     }
 
     // 模型最终更新

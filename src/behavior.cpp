@@ -11,6 +11,8 @@ void Behavior::Update(float dt) {
   switch (state) {
     case State::Idle:
       is_moving = false;
+      // 静止模式:不随机爬行,留在 Idle(点击 Happy 结束后的落点也是这里)。
+      if (!wander) break;
       if (time_in_state > 2.5f) state = State::Walk, time_in_state = 0.f;
       break;
 
@@ -42,6 +44,7 @@ void Behavior::OnClick() {
 }
 
 void Behavior::MaybeSwitch(float rng01) {
+  if (!wander) return;  // 静止模式:不随机开始爬
   // Idle 下随机开始爬(每帧以低概率触发,约平均 2s 一次)
   if (state == State::Idle && rng01 < 0.02f) {
     state = State::Walk;

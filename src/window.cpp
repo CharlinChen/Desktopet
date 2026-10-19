@@ -248,6 +248,12 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case kMouseFollowToggleMsg:
       if (self->mousefollow_cb_) self->mousefollow_cb_(self->mousefollow_user_);
       return 0;
+    case kWanderToggleMsg:
+      if (self->wander_cb_) self->wander_cb_(self->wander_user_);
+      return 0;
+    case kRandomAnimationToggleMsg:
+      if (self->random_animation_cb_) self->random_animation_cb_(self->random_animation_user_);
+      return 0;
 
     case WM_CLOSE:
       DestroyWindow(hwnd);
