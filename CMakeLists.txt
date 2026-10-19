@@ -16,6 +16,8 @@ add_executable(desktopet WIN32
   src/renderer.h
   src/renderer.cpp
   src/model.h
+  src/models.h
+  src/models.cpp
   src/behavior.h
   src/behavior.cpp
   src/splash.h

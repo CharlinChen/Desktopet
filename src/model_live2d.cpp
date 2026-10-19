@@ -101,6 +101,17 @@ static std::string ReadFileBytes(const std::string& path, size_t* size) {
   return buf;
 }
 
+// 在模型目录下找到 *.model3.json 的纯文件名(目录需以 '/' 或 '\\' 结尾)。
+// 不同模型目录里文件名不同(Haru.model3.json / Hiyori.model3.json …),不写死。
+static std::string FindModelJson(const std::string& dir) {
+  WIN32_FIND_DATAW fd{};
+  HANDLE h = FindFirstFileW(ToWide(dir + "*.model3.json").c_str(), &fd);
+  if (h == INVALID_HANDLE_VALUE) return {};
+  const std::string name = ToUtf8(fd.cFileName);
+  FindClose(h);
+  return name;
+}
+
 // ---------------- Cubism Framework 全局回调 ----------------
 // Framework 自己读 fx 着色器源码、我们读模型 json/moc3/motion3 都走这两个函数。
 
@@ -216,9 +227,11 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
     while (!home_dir.empty() && (home_dir.back() == '/' || home_dir.back() == '\\')) home_dir.pop_back();
     home_dir += '/';
 
-    // model3.json → ICubismModelSetting
+    // model3.json → ICubismModelSetting(文件名不写死,目录内唯一 *.model3.json)
+    const std::string model_json = FindModelJson(home_dir);
+    if (model_json.empty()) throw ModelLoadError{"no *.model3.json in model dir"};
     size_t jsonSize = 0;
-    std::string json = ReadFileBytes(home_dir + "Haru.model3.json", &jsonSize);
+    std::string json = ReadFileBytes(home_dir + model_json, &jsonSize);
     if (json.empty()) throw ModelLoadError{"model3.json not found or empty"};
 
     setting = new L2D::CubismModelSettingJson(
@@ -419,20 +432,25 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
           row[i * 4 + 2] = static_cast<unsigned char>(row[i * 4 + 2] * a);
         }
       }
+      // 抗锯齿:带 mip 链(DEFAULT + GENERATE_MIPS),缩小时走三线性采样
+      // (Sampler_Drawable 是 MIN_MAG_MIP_LINEAR,贴图无 mip 则退化为直接下采样)。
       D3D11_TEXTURE2D_DESC td{};
       td.Width = w;
       td.Height = h;
-      td.MipLevels = 1;
+      td.MipLevels = 0;  // 0 = 完整 mip 链
       td.ArraySize = 1;
       td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
       td.SampleDesc.Count = 1;
-      td.Usage = D3D11_USAGE_IMMUTABLE;
-      td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-      D3D11_SUBRESOURCE_DATA sd{px.data(), w * 4, 0};
+      td.Usage = D3D11_USAGE_DEFAULT;  // GenerateMips 需要 DEFAULT(可绑 RTV)
+      td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+      td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
       Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+      if (FAILED(device->CreateTexture2D(&td, nullptr, tex.GetAddressOf()))) return;
+      // 只上传 mip 0,其余由 GPU 生成
+      context->UpdateSubresource(tex.Get(), 0, nullptr, px.data(), w * 4, 0);
       Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
-      if (SUCCEEDED(device->CreateTexture2D(&td, &sd, &tex)) &&
-          SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv))) {
+      if (SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, srv.GetAddressOf()))) {
+        context->GenerateMips(srv.Get());
         textures_.push_back(srv);  // 持有到模型销毁(BindTexture 只存裸指针)
         GetRenderer<L2D::Rendering::CubismRenderer_D3D11>()->BindTexture(index, srv.Get());
       }
@@ -446,22 +464,26 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
     hr = conv->CopyPixels(nullptr, static_cast<UINT>(stride), static_cast<UINT>(px.size()), px.data());
     if (FAILED(hr)) return;
 
-    // WIC 32bppPRGBA = R,G,B,A 各 8 位、已预乘。与 R8G8B8A8_UNORM 字节序一致,
-    // 直接上传(预乘管线约定见 renderer.cpp)。
+    // WIC 32bppPRGBA = R,G,B,A 各 8 位、已预乘。与 R8G8B8A8_UNORM 字节序一致。
+    // 带 mip 链(DEFAULT + GENERATE_MIPS):缩小时走三线性采样抗锯齿(贴图无 mip
+    // 则直接下采样,缩小后边缘会闪)。mip 由 GPU 生成,逐级下采样含 alpha 抖动。
     D3D11_TEXTURE2D_DESC td{};
     td.Width = w;
     td.Height = h;
-    td.MipLevels = 1;
+    td.MipLevels = 0;  // 0 = 完整 mip 链
     td.ArraySize = 1;
     td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     td.SampleDesc.Count = 1;
-    td.Usage = D3D11_USAGE_IMMUTABLE;
-    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    D3D11_SUBRESOURCE_DATA sd{px.data(), static_cast<UINT>(stride), 0};
+    td.Usage = D3D11_USAGE_DEFAULT;  // GenerateMips 需要 DEFAULT(可绑 RTV)
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+    if (FAILED(device->CreateTexture2D(&td, nullptr, tex.GetAddressOf()))) return;
+    // 只上传 mip 0,其余由 GPU 生成
+    context->UpdateSubresource(tex.Get(), 0, nullptr, px.data(), static_cast<UINT>(stride), 0);
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
-    if (SUCCEEDED(device->CreateTexture2D(&td, &sd, &tex)) &&
-        SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv))) {
+    if (SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, srv.GetAddressOf()))) {
+      context->GenerateMips(srv.Get());
       textures_.push_back(srv);  // 持有到模型销毁(BindTexture 只存裸指针)
       GetRenderer<L2D::Rendering::CubismRenderer_D3D11>()->BindTexture(index, srv.Get());
     }
@@ -558,6 +580,8 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
 Live2DModel::~Live2DModel() { delete impl_; }
 
 void Live2DModel::SetDevice(ID3D11Device* dev, ID3D11DeviceContext* ctx) {
+  device_ = dev;
+  context_ = ctx;
   if (!impl_) {
     // 必须先 StartUp:CubismUserModel 的基类构造函数用 CSM_NEW 走
     // CubismFramework 的 placement new,而它依赖 StartUp 传入的分配器。
@@ -583,7 +607,23 @@ void Live2DModel::SetDevice(ID3D11Device* dev, ID3D11DeviceContext* ctx) {
 }
 
 void Live2DModel::Load(const std::string& dir) {
-  if (!impl_) impl_ = new Impl();
+  // 切换模型:销毁旧 Impl(CubismUserModel 析构会释放 moc/模型/渲染器/贴图/运动/
+  // 物理/姿态/眨眼等全部资源),再重建全新实例。SetDevice 已 StartUp 并设置好
+  // 着色器缓存与常量缓冲,这里复用成员里的设备/上下文与当前画布尺寸。
+  EnsureCubismStarted();
+  if (impl_) {
+    delete impl_;
+    impl_ = nullptr;
+  }
+  impl_ = new Impl();
+  impl_->device = device_;
+  impl_->context = context_;
+  impl_->canvas_w = meta_.canvas_w;
+  impl_->canvas_h = meta_.canvas_h;
+  // 重建渲染器前重申常量缓冲设置(static 全局,幂等;首次已在 SetDevice 里设过)
+  if (device_) {
+    L2D::Rendering::CubismRenderer_D3D11::SetConstantSettings(1, device_);
+  }
   impl_->Load(dir);
 }
 

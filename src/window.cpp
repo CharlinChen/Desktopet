@@ -1,5 +1,7 @@
 #include "window.h"
 
+#include "models.h"
+
 #include <cstdio>
 #include <cstdlib>
 
@@ -199,8 +201,16 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (raw->header.dwType == RIM_TYPEMOUSE) {
         const USHORT flags = raw->data.mouse.usButtonFlags;
         if (flags & RI_MOUSE_WHEEL) {
-          const short delta = static_cast<short>(raw->data.mouse.usButtonData);
-          if (self->wheel_cb_) self->wheel_cb_(static_cast<int>(delta), self->wheel_user_);
+          // RIDEV_INPUTSINK 会让本窗口收到全屏任意位置的滚轮,但缩放只在
+          // 光标悬停在宠物窗口内时才生效,否则滚轮会劫持其它窗口的正常滚动。
+          POINT pt{};
+          GetCursorPos(&pt);
+          RECT rc{};
+          GetWindowRect(hwnd, &rc);
+          if (PtInRect(&rc, pt)) {
+            const short delta = static_cast<short>(raw->data.mouse.usButtonData);
+            if (self->wheel_cb_) self->wheel_cb_(static_cast<int>(delta), self->wheel_user_);
+          }
         }
       }
       return 0;
@@ -211,6 +221,10 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
     case WM_KEYUP:
       if (self->key_cb_) self->key_cb_(static_cast<int>(wp), false, self->key_user_);
+      return 0;
+
+    case kModelSwitchMsg:
+      if (self->modelswitch_cb_) self->modelswitch_cb_(wp, self->modelswitch_user_);
       return 0;
 
     case WM_CLOSE:

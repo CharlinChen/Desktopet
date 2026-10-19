@@ -2,6 +2,8 @@
 // 透明置顶窗口封装:分层窗口 + 逐像素透明 + 鼠标穿透可切换
 #include <windows.h>
 
+#include <cstdint>
+
 // 窗口初始化失败时抛出(消息文本为英文系统错误描述)
 struct WindowInitError {
   const char* msg;
@@ -63,6 +65,11 @@ class Window {
     key_cb_ = cb;
     key_user_ = user;
   }
+  // 模型切换回调(托盘菜单投递 kModelSwitchMsg 时触发;wp = 模型下标)。
+  void SetModelSwitchCallback(void (*cb)(std::uintptr_t wp, void* user), void* user) {
+    modelswitch_cb_ = cb;
+    modelswitch_user_ = user;
+  }
   // 请求关闭窗口(消息循环结束后 RunLoop 返回)
   void RequestClose() { PostMessage(hwnd_, WM_CLOSE, 0, 0); }
 
@@ -84,6 +91,8 @@ class Window {
   void* wheel_user_ = nullptr;
   void (*key_cb_)(int, bool, void*) = nullptr;
   void* key_user_ = nullptr;
+  void (*modelswitch_cb_)(std::uintptr_t, void*) = nullptr;
+  void* modelswitch_user_ = nullptr;
 
   // 拖拽状态:按下时的光标/窗口位置,以及是否已越过拖动阈值
   POINT drag_grab_cursor_{};

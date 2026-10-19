@@ -1,6 +1,7 @@
 #include "tray.h"
 
 #include "autostart.h"
+#include "models.h"
 
 namespace {
 
@@ -64,29 +65,33 @@ void TrayIcon::Remove() {
 void TrayIcon::ShowMenu() {
   HMENU menu = CreatePopupMenu();
   if (!menu) return;
+
+  // 二级菜单「切换模型」:枚举 assets/ 下所有模型,打勾当前选中项(单选组)。
+  // 子菜单句柄经 MF_POPUP 挂到父菜单后归父菜单所有,DestroyMenu(父) 会连带释放。
+  models_ = ListModels();
+  HMENU models = CreatePopupMenu();
+  for (size_t i = 0; i < models_.size(); ++i) {
+    UINT flags = MF_STRING;
+    if (models_[i] == current_model_) flags |= MF_CHECKED;
+    AppendMenuA(models, flags, kCmdModelBase + static_cast<UINT>(i), models_[i].c_str());
+  }
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(models), L"切换模型");
+
   AppendMenuW(menu, MF_STRING, kCmdAutostart,
               AutoStart::IsEnabled() ? L"开机自启(已开启)" : L"开机自启(已关闭)");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kCmdQuit, L"退出");
 
-  // 弹出菜单后需 SetForegroundWindow,否则菜单无法随点击外部自动关闭(托盘菜单经典坑)
+  // 弹出菜单后需 SetForegroundWindow,否则菜单无法随点击外部自动关闭(托盘菜单经典坑)。
+  // 不用 TPM_RETURNCMD:二级子菜单项不会经父菜单的返回值回传,改走 WM_COMMAND
+  // (TrackPopupMenu 期间菜单项点击会同步 SendMessage 到 hwnd_)。
   POINT pt{};
   GetCursorPos(&pt);
   SetForegroundWindow(hwnd_);
-  const int cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
-                                 pt.x, pt.y, 0, hwnd_, nullptr);
+  TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd_, nullptr);
   PostMessage(hwnd_, WM_NULL, 0, 0);  // 让取消菜单的消息有处可去
 
   DestroyMenu(menu);
-
-  switch (cmd) {
-    case kCmdAutostart:
-      AutoStart::SetEnabled(!AutoStart::IsEnabled());
-      break;
-    case kCmdQuit:
-      if (cb_wnd_) PostMessage(cb_wnd_, WM_CLOSE, 0, 0);
-      break;
-  }
 }
 
 // 宠物图标:5×5 窗口内画一只 3×3 的"爪子"(橙点 = 身体,其余透明)。
@@ -165,6 +170,24 @@ LRESULT CALLBACK TrayIcon::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case kCallbackMsg:
       if (LOWORD(lp) == WM_RBUTTONUP) self->ShowMenu();
       return 0;
+    case WM_COMMAND: {
+      // 二级子菜单项点击:TrackPopupMenu 期间经 SendMessage 投递到此(父/子菜单共用本 hwnd)。
+      const UINT cmd = LOWORD(wp);
+      const size_t n = self->models_.size();
+      if (cmd >= kCmdModelBase && cmd < kCmdModelBase + n) {
+        if (self->cb_wnd_) PostMessage(self->cb_wnd_, kModelSwitchMsg, cmd - kCmdModelBase, 0);
+        return 0;
+      }
+      switch (cmd) {
+        case kCmdAutostart:
+          AutoStart::SetEnabled(!AutoStart::IsEnabled());
+          return 0;
+        case kCmdQuit:
+          if (self->cb_wnd_) PostMessage(self->cb_wnd_, WM_CLOSE, 0, 0);
+          return 0;
+      }
+      return 0;
+    }
     case kTaskbarRestartMsg:
       // 资源管理器重启后托盘图标消失,重新添加
       if (self->added_ && self->hwnd_) {

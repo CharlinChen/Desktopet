@@ -31,4 +31,7 @@ class Live2DModel final : public Model {
   struct Impl;
   Impl* impl_ = nullptr;
   Behavior* b_ = nullptr;
+  // 渲染设备/上下文:切换模型(销毁并重建 Impl)时需重新注入。
+  ID3D11Device* device_ = nullptr;
+  ID3D11DeviceContext* context_ = nullptr;
 };

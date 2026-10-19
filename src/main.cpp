@@ -1,5 +1,6 @@
 #include "behavior.h"
 #include "model.h"
+#include "models.h"
 #include "renderer.h"
 #include "singleton.h"
 #include "splash.h"
@@ -54,6 +55,8 @@ struct App {
   Renderer* r;
   Model* model;
   Behavior* b;
+  TrayIcon* tray;           // 切换成功后回写选中项,供托盘菜单打勾
+  std::string current;      // 当前模型目录名
   std::mt19937* rng;
   std::uniform_real_distribution<float>* r01;
   int bottom_y;          // 工作区底边(屏幕坐标)
@@ -128,6 +131,34 @@ void Key(int vk, bool down, void* user) {
   if (down && vk == VK_ESCAPE) a->win->RequestClose();
 }
 
+// 切换模型:销毁重建 Live2DModel 并重载对应 assets/<name>。仅在真实 SDK 构建可用。
+#ifdef HAVE_LIVE2D_SDK
+static void SwitchModel(App* a, const std::string& name) {
+  auto* l2d = dynamic_cast<Live2DModel*>(a->model);
+  if (!l2d) return;
+
+  // Load 内部会销毁旧 Impl 并重建(释放旧 moc/渲染器/贴图/运动等),再用保存的
+  // 设备与当前画布尺寸重新注入。之后重新绑定行为状态机。
+  l2d->Load(ModelDir(name));
+  l2d->SetBehavior(a->b);
+
+  a->current = name;
+  SaveModelPref(name);  // 记住选择,下次启动直接加载
+  if (a->tray) a->tray->SetCurrentModel(name);
+}
+
+// 模型切换消息(WPARAM = ListModels() 下标),由托盘菜单投递。
+void ModelSwitch(WPARAM wp, void* user) {
+  auto* a = static_cast<App*>(user);
+  const std::vector<std::string> models = ListModels();
+  const size_t idx = static_cast<size_t>(wp);
+  if (idx >= models.size()) return;
+  SwitchModel(a, models[idx]);
+}
+#else
+void ModelSwitch(WPARAM, void*) {}  // Stub 构建:无真实模型可切,忽略
+#endif
+
 // 应用缩放:重算尺寸、保持窗口底边锚点不动、重建渲染目标与模型画布。
 static void ApplyZoom(App* a) {
   const int size = static_cast<int>(kBaseSize * a->zoom + 0.5f);
@@ -199,7 +230,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
       splash.Show(L"Desktopet 首次启动\n正在编译着色器,请稍候…");
     }
 #endif
-    model->Load("assets/Haru");  // Live2D 模型目录(model3.json 等)
+
+    // 模型目录:上次选择优先(model_select.cfg),无效则回退第一个(字典序)。
+    std::vector<std::string> models = ListModels();
+    std::string current = LoadModelPref();
+    if (std::find(models.begin(), models.end(), current) == models.end()) {
+      current = models.empty() ? "Haru" : models[0];
+    }
+    model->Load(models.empty() ? "assets/Haru" : ModelDir(current));
     splash.Hide();               // 未显示时为 no-op
 
     Behavior b;
@@ -210,7 +248,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     std::mt19937 rng(12345u);
     std::uniform_real_distribution<float> r01(0.f, 1.f);
 
-    App app{&win, &r, model.get(), &b, &rng, &r01, bottom_y};
+    // 正式关闭通道:系统托盘右键菜单(切换模型/自启/退出)。托盘不可用时静默降级。
+    TrayIcon tray;
+    tray.Init(win.Hwnd());
+    tray.SetCurrentModel(current);
+
+    App app{};
+    app.win = &win;
+    app.r = &r;
+    app.model = model.get();
+    app.b = &b;
+    app.tray = &tray;
+    app.current = current;
+    app.rng = &rng;
+    app.r01 = &r01;
+    app.bottom_y = bottom_y;
     app.top_y = work.top;
     app.work_left = work.left;
     app.work_w = work_w;
@@ -224,10 +276,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     win.SetDragCallback(Drag, &app);
     win.SetWheelCallback(Wheel, &app);
     win.SetKeyCallback(Key, &app);
-
-    // 正式关闭通道:系统托盘右键「退出」。托盘不可用时静默降级(仍有 Esc 兜底)。
-    TrayIcon tray;
-    tray.Init(win.Hwnd());
+    win.SetModelSwitchCallback(ModelSwitch, &app);
 
     win.RunLoop();
     r.Shutdown();
