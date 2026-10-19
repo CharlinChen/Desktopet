@@ -12,7 +12,3 @@ constexpr UINT kModelSwitchMsg = WM_APP + 2;
 std::vector<std::string> ListModels();
 // 模型目录绝对路径(exe 旁 assets/<name>,无尾斜杠)。
 std::string ModelDir(const std::string& name);
-// 上次选择的模型名(存 exe 旁 model_select.cfg);空串 = 从未选择过。
-std::string LoadModelPref();
-// 记住当前模型名(切换时写回)。
-void SaveModelPref(const std::string& name);

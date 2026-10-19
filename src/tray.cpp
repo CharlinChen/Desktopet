@@ -2,6 +2,7 @@
 
 #include "autostart.h"
 #include "models.h"
+#include "settings.h"
 
 namespace {
 
@@ -76,6 +77,12 @@ void TrayIcon::ShowMenu() {
     AppendMenuA(models, flags, kCmdModelBase + static_cast<UINT>(i), models_[i].c_str());
   }
   AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(models), L"切换模型");
+
+  // 二级菜单「设置」:当前仅鼠标追随一项。
+  HMENU settings = CreatePopupMenu();
+  AppendMenuW(settings, MF_STRING | (mouse_follow_ ? MF_CHECKED : 0), kCmdMouseFollow,
+              L"鼠标追随");
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(settings), L"设置");
 
   AppendMenuW(menu, MF_STRING, kCmdAutostart,
               AutoStart::IsEnabled() ? L"开机自启(已开启)" : L"开机自启(已关闭)");
@@ -179,6 +186,12 @@ LRESULT CALLBACK TrayIcon::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
       }
       switch (cmd) {
+        case kCmdMouseFollow:
+          // 翻转内存态、写盘,并通知主窗口同步(模型层读 b->follow_mouse)。
+          self->mouse_follow_ = !self->mouse_follow_;
+          Settings::SetMouseFollow(self->mouse_follow_);
+          if (self->cb_wnd_) PostMessage(self->cb_wnd_, kMouseFollowToggleMsg, 0, 0);
+          return 0;
         case kCmdAutostart:
           AutoStart::SetEnabled(!AutoStart::IsEnabled());
           return 0;

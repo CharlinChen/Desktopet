@@ -1,7 +1,6 @@
 #include "models.h"
 
 #include <algorithm>
-#include <fstream>
 
 namespace {
 
@@ -63,17 +62,3 @@ std::vector<std::string> ListModels() {
 }
 
 std::string ModelDir(const std::string& name) { return ExeDir() + "assets\\" + name; }
-
-std::string LoadModelPref() {
-  std::ifstream f(ExeDir() + "model_select.cfg");
-  std::string s;
-  std::getline(f, s);
-  // 去掉行尾换行(Windows 下可能是 CRLF)
-  while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
-  return s;
-}
-
-void SaveModelPref(const std::string& name) {
-  std::ofstream f(ExeDir() + "model_select.cfg", std::ios::trunc);
-  if (f) f << name;
-}

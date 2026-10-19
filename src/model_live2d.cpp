@@ -191,6 +191,8 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
   L2D::CubismIdHandle id_body_angle_z = nullptr;
   L2D::CubismIdHandle id_mouth_open_y = nullptr;
   L2D::CubismIdHandle id_param_breath = nullptr;
+  L2D::CubismIdHandle id_eye_ball_x = nullptr;
+  L2D::CubismIdHandle id_eye_ball_y = nullptr;
 
   // --- 运动(内存持有,播放用) ---
   std::vector<std::pair<std::string, L2D::ACubismMotion*>> motions;  // "idle_0" 等
@@ -263,6 +265,8 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
     id_body_angle_z = ids->GetId(ParamBodyAngleZ);
     id_mouth_open_y = ids->GetId(ParamMouthOpenY);
     id_param_breath = ids->GetId(ParamBreath);
+    id_eye_ball_x = ids->GetId(ParamEyeBallX);
+    id_eye_ball_y = ids->GetId(ParamEyeBallY);
   }
 
   void SetupModel(L2D::ICubismModelSetting* s) {
@@ -528,6 +532,14 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
       if (id_angle_z) GetModel()->AddParameterValue(id_angle_z, move * side * 5.f, 0.4f);
       if (id_body_angle_z) GetModel()->AddParameterValue(id_body_angle_z, side * 4.f, 0.3f);
       if (id_mouth_open_y) GetModel()->AddParameterValue(id_mouth_open_y, b->happiness * 0.9f, 1.f);
+    }
+
+    // 鼠标追随:眼球看向光标(look_x/y 由 main 每帧写入,已归一化到 ±1)。
+    // 走 AddParameterValue 在呼吸/眨眼之上叠加;缺 ParamEyeBallX/Y 的模型 GetId
+    // 返回 null,空指针保护下自动退化为不追视,不会崩。
+    if (b && b->follow_mouse) {
+      if (id_eye_ball_x) GetModel()->AddParameterValue(id_eye_ball_x, b->look_x, 0.5f);
+      if (id_eye_ball_y) GetModel()->AddParameterValue(id_eye_ball_y, b->look_y, 0.5f);
     }
 
     // 模型最终更新

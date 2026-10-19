@@ -70,8 +70,18 @@ class Window {
     modelswitch_cb_ = cb;
     modelswitch_user_ = user;
   }
+  // 鼠标追随开关回调(托盘「设置」项投递 kMouseFollowToggleMsg 时触发)。
+  void SetMouseFollowToggleCallback(void (*cb)(void* user), void* user) {
+    mousefollow_cb_ = cb;
+    mousefollow_user_ = user;
+  }
   // 请求关闭窗口(消息循环结束后 RunLoop 返回)
   void RequestClose() { PostMessage(hwnd_, WM_CLOSE, 0, 0); }
+
+  // 物理屏幕坐标 → 窗口逻辑坐标。DPI 未感知进程下 GetCursorPos 返回物理像素,
+  // 而 GetWindowRect 返回被系统 DPI 虚拟化的逻辑像素,直接比较会差一个缩放因子。
+  // 供 main(鼠标追随)等需要"光标 vs 窗口位置"对齐的场景调用。100% 缩放下原样返回。
+  static POINT VirtualizeCursor(POINT physical);
 
  private:
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -93,6 +103,8 @@ class Window {
   void* key_user_ = nullptr;
   void (*modelswitch_cb_)(std::uintptr_t, void*) = nullptr;
   void* modelswitch_user_ = nullptr;
+  void (*mousefollow_cb_)(void*) = nullptr;
+  void* mousefollow_user_ = nullptr;
 
   // 拖拽状态:按下时的光标/窗口位置,以及是否已越过拖动阈值
   POINT drag_grab_cursor_{};

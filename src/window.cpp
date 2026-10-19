@@ -1,6 +1,7 @@
 #include "window.h"
 
 #include "models.h"
+#include "settings.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -112,10 +113,27 @@ void Window::Resize(int width, int height) {
   SetWindowPos(hwnd_, nullptr, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+POINT Window::VirtualizeCursor(POINT physical) {
+  // 系统虚拟化 DPI 取屏幕 DC 的 LOGPIXELSX:DPI 未感知进程的所有窗口 rect 都按
+  // 这个单一因子缩放(拖到不同 DPI 的副屏也不会变),因此换算只需一个常量。
+  // 用 GetDeviceCaps 而非 GetDpiForSystem:后者是 Win10 1607+ 的硬 import,动态
+  // 链接解析失败会让老系统直接起不来。
+  static const int dpi = []() {
+    const HDC hdc = GetDC(nullptr);
+    const int d = hdc ? GetDeviceCaps(hdc, LOGPIXELSX) : 96;
+    if (hdc) ReleaseDC(nullptr, hdc);
+    return d > 0 ? d : 96;
+  }();
+  if (dpi == 96) return physical;
+  physical.x = MulDiv(physical.x, 96, dpi);
+  physical.y = MulDiv(physical.y, 96, dpi);
+  return physical;
+}
+
 POINT Window::CursorPos() const {
   POINT p{};
   GetCursorPos(&p);
-  return p;
+  return VirtualizeCursor(p);
 }
 
 LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -205,6 +223,7 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           // 光标悬停在宠物窗口内时才生效,否则滚轮会劫持其它窗口的正常滚动。
           POINT pt{};
           GetCursorPos(&pt);
+          pt = VirtualizeCursor(pt);  // 物理→逻辑,与 GetWindowRect 同坐标空间
           RECT rc{};
           GetWindowRect(hwnd, &rc);
           if (PtInRect(&rc, pt)) {
@@ -225,6 +244,9 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case kModelSwitchMsg:
       if (self->modelswitch_cb_) self->modelswitch_cb_(wp, self->modelswitch_user_);
+      return 0;
+    case kMouseFollowToggleMsg:
+      if (self->mousefollow_cb_) self->mousefollow_cb_(self->mousefollow_user_);
       return 0;
 
     case WM_CLOSE:

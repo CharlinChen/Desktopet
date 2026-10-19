@@ -2,6 +2,7 @@
 #include "model.h"
 #include "models.h"
 #include "renderer.h"
+#include "settings.h"
 #include "singleton.h"
 #include "splash.h"
 #include "tray.h"
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <random>
 #include <string>
@@ -68,6 +70,9 @@ struct App {
   float zoom = 1.0f;
   int wheel_accum = 0;       // 滚轮增量累加(高分辨率滚轮以 120 为满档)
   bool first_frame = true;
+  // 鼠标追随的平滑目标(避免眼球瞬移)。拖拽时清零以免拉视角。
+  float look_smooth_x = 0.f;
+  float look_smooth_y = 0.f;
 };
 
 void Frame(float dt, void* user) {
@@ -86,6 +91,32 @@ void Frame(float dt, void* user) {
     const int y = a->pinned_bottom ? (a->bottom_y - a->win->Height())
                                    : static_cast<int>(a->b->y);
     a->win->Move(static_cast<int>(a->b->x), y);
+  }
+
+  // 鼠标追随:光标相对宠物脸中心的归一化偏移(±1),做指数平滑后写入行为层。
+  if (a->b->follow_mouse) {
+    POINT c{};
+    GetCursorPos(&c);
+    c = Window::VirtualizeCursor(c);  // 物理像素→逻辑,与 GetWindowRect 对齐
+    int wx = 0, wy = 0;
+    a->win->GetPos(&wx, &wy);
+    // 脸中心在窗口横向中心、约 40% 高处(宠物锚点在底部)。
+    const float cx = static_cast<float>(wx) + a->win->Width() * 0.5f;
+    const float cy = static_cast<float>(wy) + a->win->Height() * 0.4f;
+    const float range = static_cast<float>(a->win->Width()) * 0.5f;
+    // clamp 到 ±1:光标超出半个窗口宽后眼球停在极限角。
+    const float tx = std::clamp((static_cast<float>(c.x) - cx) / range, -1.f, 1.f);
+    const float ty = std::clamp((static_cast<float>(cy) - c.y) / range, -1.f, 1.f);
+    const float k = 1.f - std::exp(-dt * 12.f);  // 平滑系数(约 80ms 收敛)
+    a->look_smooth_x += (tx - a->look_smooth_x) * k;
+    a->look_smooth_y += (ty - a->look_smooth_y) * k;
+    a->b->look_x = a->look_smooth_x;
+    a->b->look_y = a->look_smooth_y;
+  } else {
+    a->look_smooth_x = 0.f;
+    a->look_smooth_y = 0.f;
+    a->b->look_x = 0.f;
+    a->b->look_y = 0.f;
   }
 
   // 模型动画参数 → 渲染
@@ -143,7 +174,7 @@ static void SwitchModel(App* a, const std::string& name) {
   l2d->SetBehavior(a->b);
 
   a->current = name;
-  SaveModelPref(name);  // 记住选择,下次启动直接加载
+  Settings::SetModelName(name);  // 记住选择,下次启动直接加载
   if (a->tray) a->tray->SetCurrentModel(name);
 }
 
@@ -196,6 +227,16 @@ void Wheel(int delta, void* user) {
   ApplyZoom(a);
 }
 
+// 托盘「设置 → 鼠标追随」切换:翻转内存态(模型层读 b->follow_mouse),回写托盘打勾态。
+// cfg 已在 tray 内写盘,这里只同步运行时状态,避免每帧读盘。
+void MouseFollowToggle(void* user) {
+  auto* a = static_cast<App*>(user);
+  a->b->follow_mouse = !a->b->follow_mouse;
+  a->look_smooth_x = 0.f;
+  a->look_smooth_y = 0.f;
+  if (a->tray) a->tray->SetMouseFollow(a->b->follow_mouse);
+}
+
 }  // namespace
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
@@ -231,9 +272,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     }
 #endif
 
-    // 模型目录:上次选择优先(model_select.cfg),无效则回退第一个(字典序)。
+    // 模型目录:上次选择优先,无效则回退第一个(字典序)。
     std::vector<std::string> models = ListModels();
-    std::string current = LoadModelPref();
+    std::string current = Settings::ModelName();
     if (std::find(models.begin(), models.end(), current) == models.end()) {
       current = models.empty() ? "Haru" : models[0];
     }
@@ -244,6 +285,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     b.SetBounds(static_cast<float>(work.left), static_cast<float>(work.left + work_w - 400));
     b.x = static_cast<float>(work.left + (work_w - 400) / 2);  // 与窗口初始位置同步
     b.y = static_cast<float>(bottom_y - 400);
+    b.follow_mouse = Settings::MouseFollow();  // 启动即读取 cfg
 
     std::mt19937 rng(12345u);
     std::uniform_real_distribution<float> r01(0.f, 1.f);
@@ -252,6 +294,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     TrayIcon tray;
     tray.Init(win.Hwnd());
     tray.SetCurrentModel(current);
+    tray.SetMouseFollow(b.follow_mouse);  // 初始打勾态与 cfg 一致
 
     App app{};
     app.win = &win;
@@ -277,6 +320,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     win.SetWheelCallback(Wheel, &app);
     win.SetKeyCallback(Key, &app);
     win.SetModelSwitchCallback(ModelSwitch, &app);
+    win.SetMouseFollowToggleCallback(MouseFollowToggle, &app);
 
     win.RunLoop();
     r.Shutdown();

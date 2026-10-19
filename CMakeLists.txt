@@ -26,6 +26,8 @@ add_executable(desktopet WIN32
   src/tray.cpp
   src/autostart.h
   src/autostart.cpp
+  src/settings.h
+  src/settings.cpp
   src/singleton.h
 )
 

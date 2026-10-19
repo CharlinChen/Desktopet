@@ -19,6 +19,9 @@ struct Behavior {
   bool is_moving = false;      // 正在爬行
   float eye_blink = 0.f;       // 0~1,眨眼相位
   float happiness = 0.f;       // 0~1,点击后的兴奋值,随时间衰减
+  bool follow_mouse = false;   // 鼠标追随开关(托盘「设置」项,main 每帧同步)
+  float look_x = 0.f;          // 归一化 [-1,1]:光标相对宠物脸中心的水平偏移(右正)
+  float look_y = 0.f;          // 归一化 [-1,1]:垂直偏移(上正)
 
   float x = 0.f, y = 0.f;      // 当前位置(窗口左上角,屏幕坐标)
 
