@@ -9,7 +9,6 @@
 namespace {
 
 constexpr wchar_t kClassName[] = L"DesktopetPetWindow";
-constexpr COLORREF kColorKey = RGB(255, 0, 255);  // 品红:色键透明
 constexpr int kDragThreshold = 4;  // 光标移动超过 4px 才判定为拖动(否则是点击)
 
 LARGE_INTEGER g_qpcFreq;
@@ -52,20 +51,16 @@ void Window::Init(HINSTANCE hInstance, int width, int height) {
   wc.lpszClassName = kClassName;
   if (!RegisterClassExW(&wc)) Win32ErrorMessage("RegisterClassExW failed", GetLastError());
 
-  // 分层窗口 + 色键透明(LWA_COLORKEY)。
-  // 本机不支持 ULW(UpdateLayeredWindow 返回 ERROR_GEN_FAILURE)与预乘
-  // alpha 交换链(DXGI_ERROR_INVALID_CALL),色键是唯一可用路径:
-  // 品红 (255,0,255) 像素被 DWM 完全抠掉,其余像素正常合成。
+  // 分层窗口 + 逐像素 alpha(UpdateLayeredWindow / ULW_ALPHA)。
+  // 2026-10-19 探针实测本机 ULW 可用(带渐变边缘的预乘 DIB 平滑显示),
+  // 旧的「色键唯一可行」结论作废。WS_EX_LAYERED 仍需保留,但不再 SetLayeredWindowAttributes
+  // 注册色键;每帧由渲染器 UpdateLayeredWindow 把预乘 DIB 直接合成到桌面,
+  // 素材透明背景天然透明、边缘逐像素平滑。
   const DWORD exStyle = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
   hwnd_ = CreateWindowExW(exStyle, kClassName, L"Desktopet", WS_POPUP,
                           CW_USEDEFAULT, CW_USEDEFAULT, width, height,
                           nullptr, nullptr, hInstance, this);
   if (!hwnd_) Win32ErrorMessage("CreateWindowExW failed", GetLastError());
-
-  // 关键:先注册色键再 Show。渲染器每帧用 GDI 把(阈值化+反预乘后的)
-  // 帧图 BitBlt 到窗口 DC,品红区即透明。
-  if (!SetLayeredWindowAttributes(hwnd_, kColorKey, 0, LWA_COLORKEY))
-    Win32ErrorMessage("SetLayeredWindowAttributes failed", GetLastError());
 
   // 注册 Raw Input 鼠标(滚轮)。RIDEV_INPUTSINK 让本窗口在无焦点(NOACTIVATE)
   // 状态下也收到 WM_INPUT——滚轮缩放依赖它,不劫持其他窗口的鼠标事件。

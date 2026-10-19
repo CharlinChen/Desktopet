@@ -1,6 +1,6 @@
 #pragma once
-// D3D11 渲染器:离屏渲染(预乘 alpha)→ 读回 → 色键转换 → GDI BitBlt。
-// (本机不支持预乘交换链与 ULW,色键是唯一可用透明路径,见 renderer.cpp 头注释)
+// D3D11 渲染器:离屏渲染(预乘 alpha)→ 读回 → UpdateLayeredWindow 逐像素合成。
+// (2026-10-19 探针实测本机 ULW 可用,色键方案已作废,见 renderer.cpp 头注释)
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <windows.h>
@@ -23,7 +23,7 @@ class Renderer {
 
   // 清屏为全透明(alpha=0)。模型绘制必须在 Begin/End 之间发生
   void Begin();
-  // 读回、色键转换并 BitBlt 呈现
+  // 读回并 UpdateLayeredWindow 呈现
   void End();
 
   // 窗口尺寸变化时调用(重建离屏缓冲)
@@ -34,6 +34,7 @@ class Renderer {
 
  private:
   void CreateTargets();
+  void PresentLayered();
 
   HWND hwnd_ = nullptr;
   int width_ = 0;
@@ -46,7 +47,8 @@ class Renderer {
   ComPtr<ID3D11RenderTargetView> rtv_;
   ComPtr<ID3D11BlendState> bs_premult_;  // 预乘 alpha:src + dst*(1-src.a)
 
-  // 色键呈现:渲染结果转换后放这里,再 BitBlt 到窗口
+  // 逐像素 alpha 呈现:预乘 DIB + 常驻内存 DC,End() 用 UpdateLayeredWindow 合成。
   std::unique_ptr<std::remove_pointer_t<HBITMAP>, decltype(&DeleteObject)> dib_{nullptr, &DeleteObject};
   void* dib_bits_ = nullptr;
+  HDC mem_dc_ = nullptr;  // DIB 需 SelectObject 进 DC,常驻整个生命周期
 };

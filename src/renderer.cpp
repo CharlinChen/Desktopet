@@ -2,21 +2,16 @@
 
 #include <cstring>
 
-// 方案:色键透明(LWA_COLORKEY,品红抠除)。
-//   本机不支持 DXGI 预乘 alpha 交换链(CreateSwapChainForHwnd 对
-//   PREMULTIPLIED/STRAIGHT 返回 DXGI_ERROR_INVALID_CALL),也不支持
-//   UpdateLayeredWindow(返回 ERROR_GEN_FAILURE)。色键是唯一可用路径。
+// 方案:逐像素 alpha 透明(UpdateLayeredWindow / ULW_ALPHA)。
+//   2026-10-19 探针实测:本机 ULW 可用(预乘 32bpp top-down DIB + AC_SRC_ALPHA
+//   显示带平滑渐变边缘的圆盘),推翻早前「ULW 返回 ERROR_GEN_FAILURE」的旧结论。
+//   色键(LWA_COLORKEY)方案作废——它只有 1bit 透明,模型边缘半透明像素被硬切成毛刺。
 // 流程:
 //   D3D11 离屏渲染(预乘 alpha,逐像素)
 //   → CopyResource 到 staging → Map 读回
-//   → CPU 逐像素:alpha≈0 → 品红(色键);否则反预乘(rgb/a)
-//   → SetDIBits 进 DIB → GDI BitBlt 到窗口 DC
-// 注意窗口类没有 CS_OWNDC,GetDC 每次都是临时 DC——BitBlt 是同步的,
-// 对桌宠 400x400 每帧开销可接受。
-
-namespace {
-constexpr int kAlphaThreshold = 8;  // alpha < 8 判为透明
-}
+//   → 预乘 BGRA 原样拷进 32bpp top-down DIB(不反预乘、不阈值化)
+//   → UpdateLayeredWindow(ULW_ALPHA) 直接合成到桌面
+// 素材透明背景天然透明、边缘逐像素平滑,不再依赖色键颜色。
 
 void Renderer::Init(HWND hwnd, int width, int height) {
   hwnd_ = hwnd;
@@ -56,9 +51,16 @@ void Renderer::Init(HWND hwnd, int width, int height) {
 }
 
 void Renderer::CreateTargets() {
+  // 释放旧 DIB/内存 DC(Resize 重进时)
+  if (mem_dc_) {
+    if (dib_) SelectObject(mem_dc_, GetStockObject(HOLLOW_BRUSH));
+    DeleteDC(mem_dc_);
+    mem_dc_ = nullptr;
+  }
   rtv_.Reset();
   offscreen_.Reset();
   staging_.Reset();
+  dib_.reset();
 
   // 渲染目标纹理:预乘 alpha 写入
   D3D11_TEXTURE2D_DESC td{};
@@ -81,7 +83,8 @@ void Renderer::CreateTargets() {
   if (FAILED(device_->CreateTexture2D(&td, nullptr, staging_.GetAddressOf())))
     throw RendererError{"CreateTexture2D (staging) failed"};
 
-  // 目标 DIB:32 位 BGRA top-down,初始全品红 = 全透明
+  // 目标 DIB:32 位 BGRA top-down,预乘 alpha,交给 UpdateLayeredWindow 合成。
+  // 初始清零 = 全透明,避免 Show 之前窗口闪黑。
   BITMAPINFO bi{};
   bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
   bi.bmiHeader.biWidth = width_;
@@ -91,20 +94,23 @@ void Renderer::CreateTargets() {
   bi.bmiHeader.biCompression = BI_RGB;
   dib_.reset(CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &dib_bits_, nullptr, 0));
   if (!dib_) throw RendererError{"CreateDIBSection failed"};
-  // 填品红(BGRA: B=FF G=00 R=FF)
-  unsigned char* p = static_cast<unsigned char*>(dib_bits_);
-  for (int y = 0; y < height_; ++y) {
-    unsigned char* row = p + static_cast<size_t>(y) * width_ * 4;
-    for (int x = 0; x < width_; ++x) {
-      row[x * 4 + 0] = 0xFF;  // B
-      row[x * 4 + 1] = 0x00;  // G
-      row[x * 4 + 2] = 0xFF;  // R
-      row[x * 4 + 3] = 0x00;  // A(不用)
-    }
-  }
+  std::memset(dib_bits_, 0, static_cast<size_t>(width_) * height_ * 4);
+
+  // 内存 DC:ULW 要求 DIB 被 SelectObject 进一个 DC 再传给它,此 DC 需常驻。
+  mem_dc_ = CreateCompatibleDC(nullptr);
+  if (!mem_dc_) throw RendererError{"CreateCompatibleDC failed"};
+  SelectObject(mem_dc_, dib_.get());
+
+  // 立即以全透明内容做一次 ULW:让窗口在 ShowWindow 之前就处于已定义的分层状态。
+  PresentLayered();
 }
 
 void Renderer::Shutdown() {
+  if (mem_dc_) {
+    if (dib_) SelectObject(mem_dc_, GetStockObject(HOLLOW_BRUSH));
+    DeleteDC(mem_dc_);
+    mem_dc_ = nullptr;
+  }
   rtv_.Reset();
   offscreen_.Reset();
   staging_.Reset();
@@ -125,6 +131,24 @@ void Renderer::Begin() {
   context_->RSSetViewports(1, &vp);
 }
 
+void Renderer::PresentLayered() {
+  // 用 mem_dc_ 里的预乘 DIB 直接合成到桌面。显式给 ptDst/sz,不依赖 NULL 默认,
+  // 否则窗口首次分层可能被按 0×0 处理导致「全透明」。
+  POINT ptSrc{0, 0};
+  SIZE sz{width_, height_};
+  POINT ptDst{0, 0};
+  if (hwnd_) {
+    RECT r{};
+    GetWindowRect(hwnd_, &r);
+    ptDst.x = r.left;
+    ptDst.y = r.top;
+  }
+  BLENDFUNCTION bf{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+  HDC screen = GetDC(nullptr);
+  UpdateLayeredWindow(hwnd_, screen, &ptDst, &sz, mem_dc_, &ptSrc, 0, &bf, ULW_ALPHA);
+  if (screen) ReleaseDC(nullptr, screen);
+}
+
 void Renderer::End() {
   // GPU → staging → 读回
   context_->CopyResource(staging_.Get(), offscreen_.Get());
@@ -133,41 +157,15 @@ void Renderer::End() {
     const unsigned char* src = static_cast<const unsigned char*>(m.pData);
     const size_t row_bytes = static_cast<size_t>(width_) * 4;
     unsigned char* dst = static_cast<unsigned char*>(dib_bits_);
+    // 预乘 BGRA 原样拷贝(不反预乘、不阈值化):alpha 交给 ULW 做逐像素合成。
     for (int y = 0; y < height_; ++y) {
-      const unsigned char* s = src + static_cast<size_t>(y) * m.RowPitch;
-      unsigned char* d = dst + static_cast<size_t>(y) * row_bytes;
-      for (int x = 0; x < width_; ++x) {
-        // 源:BGRA 预乘。alpha < 阈值 → 品红;否则反预乘。
-        const unsigned char b = s[x * 4 + 0];
-        const unsigned char g = s[x * 4 + 1];
-        const unsigned char r = s[x * 4 + 2];
-        const unsigned char a = s[x * 4 + 3];
-        if (a < kAlphaThreshold) {
-          d[x * 4 + 0] = 0xFF;  // B
-          d[x * 4 + 1] = 0x00;  // G
-          d[x * 4 + 2] = 0xFF;  // R → 品红 = 色键 = 透明
-          d[x * 4 + 3] = 0x00;
-        } else {
-          d[x * 4 + 0] = static_cast<unsigned char>(b * 255 / a);  // 反预乘
-          d[x * 4 + 1] = static_cast<unsigned char>(g * 255 / a);
-          d[x * 4 + 2] = static_cast<unsigned char>(r * 255 / a);
-          d[x * 4 + 3] = a;
-        }
-      }
+      std::memcpy(dst + static_cast<size_t>(y) * row_bytes,
+                  src + static_cast<size_t>(y) * m.RowPitch, row_bytes);
     }
     context_->Unmap(staging_.Get(), 0);
   }
 
-  // GDI 呈现到窗口 DC
-  HDC dc = GetDC(hwnd_);
-  if (dc) {
-    HDC mem = CreateCompatibleDC(dc);
-    HGDIOBJ old = SelectObject(mem, dib_.get());
-    BitBlt(dc, 0, 0, width_, height_, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, old);
-    DeleteDC(mem);
-    ReleaseDC(hwnd_, dc);
-  }
+  PresentLayered();
 }
 
 void Renderer::Resize(int width, int height) {
