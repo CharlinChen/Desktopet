@@ -187,6 +187,7 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
   // --- 行为参数映射 ---
   Behavior* b = nullptr;
   L2D::CubismIdHandle id_angle_x = nullptr;
+  L2D::CubismIdHandle id_angle_y = nullptr;
   L2D::CubismIdHandle id_angle_z = nullptr;
   L2D::CubismIdHandle id_body_angle_z = nullptr;
   L2D::CubismIdHandle id_mouth_open_y = nullptr;
@@ -261,6 +262,7 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
     L2D::CubismIdManager* ids = L2D::CubismFramework::GetIdManager();
     using namespace Live2D::Cubism::Framework::DefaultParameterId;
     id_angle_x = ids->GetId(ParamAngleX);
+    id_angle_y = ids->GetId(ParamAngleY);
     id_angle_z = ids->GetId(ParamAngleZ);
     id_body_angle_z = ids->GetId(ParamBodyAngleZ);
     id_mouth_open_y = ids->GetId(ParamMouthOpenY);
@@ -534,12 +536,15 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
       if (id_mouth_open_y) GetModel()->AddParameterValue(id_mouth_open_y, b->happiness * 0.9f, 1.f);
     }
 
-    // 鼠标追随:眼球看向光标(look_x/y 由 main 每帧写入,已归一化到 ±1)。
-    // 走 AddParameterValue 在呼吸/眨眼之上叠加;缺 ParamEyeBallX/Y 的模型 GetId
-    // 返回 null,空指针保护下自动退化为不追视,不会崩。
+    // 鼠标追随:眼球看向光标 + 头部随光标转动(look_x/y 由 main 每帧写入,已归一化到 ±1)。
+    // 头部用 SetParameterValue 覆盖 Idle motion 的随机头转——开启跟随时"看光标"应占主导;
+    // 缺 ParamEyeBallX/Y / ParamAngleX/Y 的模型 GetId 返回 null,空指针保护下自动退化。
     if (b && b->follow_mouse) {
       if (id_eye_ball_x) GetModel()->AddParameterValue(id_eye_ball_x, b->look_x, 0.5f);
       if (id_eye_ball_y) GetModel()->AddParameterValue(id_eye_ball_y, b->look_y, 0.5f);
+      // 头随光标:左右看映射到 ParamAngleY,俯仰映射到 ParamAngleX。方向与官方样例一致。
+      if (id_angle_x) GetModel()->SetParameterValue(id_angle_x, b->look_y * 10.f, 0.5f);
+      if (id_angle_y) GetModel()->SetParameterValue(id_angle_y, b->look_x * 15.f, 0.5f);
     }
 
     // 模型最终更新
