@@ -39,7 +39,17 @@ std::string ToUtf8(const std::wstring& w) {
 
 }  // namespace
 
-std::vector<std::string> ListModels() {
+// 判断目录下是否存在匹配 pattern 的文件(如 *.model3.json)。无匹配返回 false。
+static bool DirHasFile(const std::wstring& dir, const wchar_t* pattern) {
+  WIN32_FIND_DATAW fd{};
+  HANDLE h = FindFirstFileW((dir + pattern).c_str(), &fd);
+  if (h == INVALID_HANDLE_VALUE) return false;
+  FindClose(h);
+  return true;
+}
+
+// 枚举 assets/ 下所有一级子目录,对每个目录调用 include 决定是否收录。
+static std::vector<std::string> ListModelDirs(bool (*include)(const std::wstring&)) {
   std::vector<std::string> out;
   const std::wstring assets = ToWide(ExeDir() + "assets");
   WIN32_FIND_DATAW fd{};
@@ -48,17 +58,24 @@ std::vector<std::string> ListModels() {
   do {
     if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
     if (fd.cFileName[0] == L'.') continue;  // 跳过 . 与 ..
-    WIN32_FIND_DATAW jfd{};
-    HANDLE jh =
-        FindFirstFileW((assets + L"\\" + fd.cFileName + L"\\*.model3.json").c_str(), &jfd);
-    if (jh != INVALID_HANDLE_VALUE) {
-      FindClose(jh);
-      out.push_back(ToUtf8(fd.cFileName));
-    }
+    const std::wstring dir = assets + L"\\" + fd.cFileName + L"\\";
+    if (include(dir)) out.push_back(ToUtf8(fd.cFileName));
   } while (FindNextFileW(h, &fd));
   FindClose(h);
   std::sort(out.begin(), out.end());
   return out;
+}
+
+std::vector<std::string> ListModels() {
+  return ListModelDirs([](const std::wstring& d) { return DirHasFile(d, L"*.model3.json"); });
+}
+
+std::vector<std::string> ListLegacyModels() {
+  // 旧版 Cubism 2.x 用 *.model.json(无 3 后缀)。排除同时含 *.model3.json 的目录,
+  // 避免 3.0 目录被误判为旧格式。
+  return ListModelDirs([](const std::wstring& d) {
+    return !DirHasFile(d, L"*.model3.json") && DirHasFile(d, L"*.model.json");
+  });
 }
 
 std::string ModelDir(const std::string& name) { return ExeDir() + "assets\\" + name; }

@@ -25,6 +25,8 @@
 #include <cstring>
 #include <fstream>
 #include <malloc.h>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "behavior.h"
@@ -206,6 +208,10 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
   std::vector<std::pair<std::string, L2D::ACubismMotion*>> motions;  // "idle_0" 等
   float idle_restart_timer = 0.f;
 
+  // --- 加载诊断(非致命问题,加载完成后汇总弹窗提示) ---
+  std::set<std::string> missing_files_;  // json 引用但磁盘上不存在的动作文件
+  std::set<std::string> corrupt_files_;  // 一致性校验失败 / 无法解析的动作文件
+
   // --- 渲染设备 ---
   ID3D11Device* device = nullptr;
   ID3D11DeviceContext* context = nullptr;
@@ -225,6 +231,32 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
       delete setting;
       setting = nullptr;
     }
+  }
+
+  // 归一化参数名:转小写、去掉下划线/空格/连字符,使 "ParamEyeBallX" 与
+  // "PARAM_EYE_BALL_X" 视为同一参数(仅大小写不同是 _stricmp 能处理的,但下划线不行)。
+  static std::string NormalizeParamName(const char* s) {
+    std::string out;
+    if (!s) return out;
+    for (const char* p = s; *p; ++p) {
+      const char c = *p;
+      if (c == '_' || c == ' ' || c == '-') continue;
+      out.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c));
+    }
+    return out;
+  }
+
+  // 在模型真实参数表里按归一化名查找句柄;找不到返回 nullptr。
+  // 不能走 IdManager::GetId:它只登记字符串、不校验模型是否有该参数,
+  // 而且命名不同会令 SetParameterValue 静默失效。
+  L2D::CubismIdHandle ResolveParam(const char* defaultName) {
+    if (!GetModel()) return nullptr;
+    const std::string want = NormalizeParamName(defaultName);
+    for (L2D::csmInt32 i = 0; i < GetModel()->GetParameterCount(); ++i) {
+      L2D::CubismIdHandle h = GetModel()->GetParameterId(static_cast<L2D::csmUint32>(i));
+      if (NormalizeParamName(h->GetString().GetRawString()) == want) return h;
+    }
+    return nullptr;
   }
 
   // --- 加载 ---
@@ -265,17 +297,21 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
       // (scissor 关,全屏 rect),先保证能跑;mask 效果可后续再细化。
     }
 
-    // 行为参数 Id(不存在则为空,SetParameterValue 会忽略)
-    L2D::CubismIdManager* ids = L2D::CubismFramework::GetIdManager();
+    // 行为参数 Id:统一走 ResolveParam,直接在模型真实参数表里按归一化名命中,
+    // 兼容 CamelCase(ParamEyeBallX)与大写下划线(PARAM_EYE_BALL_X)两种命名。
+    // 之前用 IdManager::GetId + _stricmp,只对「大小写不同」有效,对「下划线分隔」
+    // 无效,导致 lkk 眼珠/头部等参数静默失效(模型静止)。
     using namespace Live2D::Cubism::Framework::DefaultParameterId;
-    id_angle_x = ids->GetId(ParamAngleX);
-    id_angle_y = ids->GetId(ParamAngleY);
-    id_angle_z = ids->GetId(ParamAngleZ);
-    id_body_angle_z = ids->GetId(ParamBodyAngleZ);
-    id_mouth_open_y = ids->GetId(ParamMouthOpenY);
-    id_param_breath = ids->GetId(ParamBreath);
-    id_eye_ball_x = ids->GetId(ParamEyeBallX);
-    id_eye_ball_y = ids->GetId(ParamEyeBallY);
+    id_angle_x = ResolveParam(ParamAngleX);
+    id_angle_y = ResolveParam(ParamAngleY);
+    id_angle_z = ResolveParam(ParamAngleZ);
+    id_body_angle_z = ResolveParam(ParamBodyAngleZ);
+    id_mouth_open_y = ResolveParam(ParamMouthOpenY);
+    // 部分模型用 PARAM_MOUTH_OPEN(无 _Y 后缀)表示张嘴开合,归一化后是 parammouthopen。
+    if (!id_mouth_open_y) id_mouth_open_y = ResolveParam("PARAM_MOUTH_OPEN");
+    id_param_breath = ResolveParam(ParamBreath);
+    id_eye_ball_x = ResolveParam(ParamEyeBallX);
+    id_eye_ball_y = ResolveParam(ParamEyeBallY);
   }
 
   void SetupModel(L2D::ICubismModelSetting* s) {
@@ -318,55 +354,69 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
       }
     }
 
-    // 眨眼:用模型自带的参数配置
+    // 眨眼:优先模型 Groups 配置;Groups 为空(如 lkk 的 model3.json 里 "Groups":[])时,
+    // 手动按标准参数名匹配眼睑开合参数,否则宠物没有静息眨眼(关掉动画就完全静止)。
     if (s->GetEyeBlinkParameterCount() > 0) {
       _eyeBlink = L2D::CubismEyeBlink::Create(s);
+    } else {
+      L2D::CubismIdHandle l = ResolveParam(Live2D::Cubism::Framework::DefaultParameterId::ParamEyeLOpen);
+      L2D::CubismIdHandle r = ResolveParam(Live2D::Cubism::Framework::DefaultParameterId::ParamEyeROpen);
+      if (l && r) {
+        _eyeBlink = L2D::CubismEyeBlink::Create();
+        L2D::csmVector<L2D::CubismIdHandle> ids;
+        ids.PushBack(l);
+        ids.PushBack(r);
+        _eyeBlink->SetParameterIds(ids);
+      }
     }
 
-    // 呼吸:标准参数(与官方样例一致)
+    // 呼吸:标准参数(与官方样例一致),但参数名同样用 ResolveParam 兼容大小写/下划线。
     {
       breath = L2D::CubismBreath::Create();
       L2D::csmVector<L2D::CubismBreath::BreathParameterData> bp;
-      bp.PushBack(L2D::CubismBreath::BreathParameterData(
-          L2D::CubismFramework::GetIdManager()->GetId(
-              Live2D::Cubism::Framework::DefaultParameterId::ParamAngleX),
-          0.f, 15.f, 6.5345f, 0.5f));
-      bp.PushBack(L2D::CubismBreath::BreathParameterData(
-          L2D::CubismFramework::GetIdManager()->GetId(
-              Live2D::Cubism::Framework::DefaultParameterId::ParamAngleY),
-          0.f, 8.f, 3.5345f, 0.5f));
-      bp.PushBack(L2D::CubismBreath::BreathParameterData(
-          L2D::CubismFramework::GetIdManager()->GetId(
-              Live2D::Cubism::Framework::DefaultParameterId::ParamAngleZ),
-          0.f, 10.f, 5.5345f, 0.5f));
-      bp.PushBack(L2D::CubismBreath::BreathParameterData(
-          L2D::CubismFramework::GetIdManager()->GetId(
-              Live2D::Cubism::Framework::DefaultParameterId::ParamBodyAngleX),
-          0.f, 4.f, 15.5345f, 0.5f));
-      bp.PushBack(L2D::CubismBreath::BreathParameterData(
-          L2D::CubismFramework::GetIdManager()->GetId(
-              Live2D::Cubism::Framework::DefaultParameterId::ParamBreath),
-          0.5f, 0.5f, 3.2345f, 0.5f));
+      using namespace Live2D::Cubism::Framework::DefaultParameterId;
+      auto add_breath = [&](const char* name, float offset, float peak, float cycle, float weight) {
+        L2D::CubismIdHandle h = ResolveParam(name);
+        if (h) bp.PushBack(L2D::CubismBreath::BreathParameterData(h, offset, peak, cycle, weight));
+      };
+      add_breath(ParamAngleX, 0.f, 15.f, 6.5345f, 0.5f);
+      add_breath(ParamAngleY, 0.f, 8.f, 3.5345f, 0.5f);
+      add_breath(ParamAngleZ, 0.f, 10.f, 5.5345f, 0.5f);
+      add_breath(ParamBodyAngleX, 0.f, 4.f, 15.5345f, 0.5f);
+      add_breath(ParamBreath, 0.5f, 0.5f, 3.2345f, 0.5f);
       breath->SetParameters(bp);
     }
 
-    // 运动组(Idle 组)全部加载到内存
+    // 运动组(Idle 组)全部加载到内存。官方样例把待机动作放 "Idle" 组;
+    // 但部分模型(如 lkk)把所有动作放在无组名("")的默认组里,同样当 Idle 播放。
     for (L2D::csmInt32 g = 0; g < s->GetMotionGroupCount(); ++g) {
       const char* group = s->GetMotionGroupName(g);
-      if (!group || strcmp(group, "Idle") != 0) continue;  // 目前只播放 Idle 组
+      if (!group) continue;
+      const bool is_idle = (strcmp(group, "Idle") == 0) || (group[0] == '\0');
+      if (!is_idle) continue;  // 目前只播放 Idle 组(其余如 TapBody 仅点击触发,不做随机待机)
       const L2D::csmInt32 count = s->GetMotionCount(group);
       for (L2D::csmInt32 i = 0; i < count; ++i) {
         const char* file = s->GetMotionFileName(group, i);
         if (!file || !file[0]) continue;
+        const std::string rel = file;
         size_t size = 0;
-        std::string data = ReadFileBytes(home_dir + file, &size);
-        if (data.empty()) continue;
+        std::string data = ReadFileBytes(home_dir + rel, &size);
+        if (data.empty()) {
+          missing_files_.insert(rel);  // json 引用但文件不存在
+          continue;
+        }
         const std::string name =
             std::string(L2D::Utils::CubismString::GetFormatedString("%s_%d", group, i).GetRawString());
         auto* m = static_cast<L2D::CubismMotion*>(
             LoadMotion(reinterpret_cast<L2D::csmByte*>(data.data()),
-                       static_cast<L2D::csmSizeInt>(size), name.c_str()));
-        if (m) motions.emplace_back(name, m);
+                       static_cast<L2D::csmSizeInt>(size), name.c_str(),
+                       nullptr, nullptr, nullptr, nullptr, -1,
+                       /*shouldCheckMotionConsistency=*/true));
+        if (m) {
+          motions.emplace_back(name, m);
+        } else {
+          corrupt_files_.insert(rel);  // 元数据计数不符或 JSON 解析失败
+        }
       }
     }
 
@@ -386,6 +436,46 @@ struct Live2DModel::Impl : L2D::CubismUserModel {
     GetModel()->SaveParameters();
     IsUpdating(false);
     IsInitialized(true);
+
+    ReportProblems();  // 动作缺文件/损坏:非致命,加载完成后弹窗提示
+  }
+
+  // 汇总动作加载的非致命问题并弹窗。缺文件与损坏都只影响部分动画,
+  // 模型本体能显示,所以不抛异常,只提示用户自行修复/转换。
+  void ReportProblems() {
+    if (missing_files_.empty() && corrupt_files_.empty()) return;
+    std::string msg =
+        "该模型的部分动作存在问题,这些动画将无法播放:\n";
+    const size_t missing = missing_files_.size();
+    const size_t corrupt = corrupt_files_.size();
+    if (missing) {
+      msg += "\n【缺失文件】json 引用但目录里不存在(" + std::to_string(missing) + " 个):\n";
+      size_t shown = 0;
+      for (const auto& f : missing_files_) {
+        if (shown++ >= 5) {
+          msg += "  …等\n";
+          break;
+        }
+        msg += "  " + f + "\n";
+      }
+    }
+    if (corrupt) {
+      msg += "\n【无法解析】元数据计数不符或格式损坏(" + std::to_string(corrupt) + " 个):\n";
+      size_t shown = 0;
+      for (const auto& f : corrupt_files_) {
+        if (shown++ >= 5) {
+          msg += "  …等\n";
+          break;
+        }
+        msg += "  " + f + "\n";
+      }
+    }
+    msg += "\n请用官方转换器重新转换该模型为 Cubism 3.0 格式。";
+
+    // 弹窗在加载线程(此处就是 WinMain 主线程)同步弹出,不会与渲染冲突。
+    // 用宽字符版 MessageBoxW:msg 是 UTF-8,直接走 MessageBoxA 会按 ANSI 代码页
+    // (中文系统是 GBK)解释成乱码,必须先转宽字符。
+    MessageBoxW(nullptr, ToWide(msg).c_str(), L"动作加载警告", MB_ICONWARNING | MB_OK);
   }
 
   void SetupTextures() {

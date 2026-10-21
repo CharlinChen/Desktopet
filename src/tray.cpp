@@ -9,6 +9,15 @@ namespace {
 constexpr wchar_t kClassName[] = L"DesktopetTrayWnd";
 constexpr UINT kTaskbarRestartMsg = 0x02A8;  // TaskbarCreated 广播(资源管理器重启后重建托盘)
 
+// UTF-8 目录名 → 宽字符(托盘菜单 AppendMenuW 用)
+std::wstring ToWide(const std::string& s) {
+  if (s.empty()) return L"";
+  const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
+  std::wstring w(static_cast<size_t>(n), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), &w[0], n);
+  return w;
+}
+
 }  // namespace
 
 TrayIcon::~TrayIcon() { Remove(); }
@@ -70,11 +79,20 @@ void TrayIcon::ShowMenu() {
   // 二级菜单「切换模型」:枚举 assets/ 下所有模型,打勾当前选中项(单选组)。
   // 子菜单句柄经 MF_POPUP 挂到父菜单后归父菜单所有,DestroyMenu(父) 会连带释放。
   models_ = ListModels();
+  legacy_models_ = ListLegacyModels();
   HMENU models = CreatePopupMenu();
   for (size_t i = 0; i < models_.size(); ++i) {
     UINT flags = MF_STRING;
     if (models_[i] == current_model_) flags |= MF_CHECKED;
     AppendMenuA(models, flags, kCmdModelBase + static_cast<UINT>(i), models_[i].c_str());
+  }
+  // 旧版 Cubism 2.x 模型列在分隔线下并加「(旧格式)」后缀,仅用于提示不可加载。
+  if (!legacy_models_.empty()) {
+    AppendMenuW(models, MF_SEPARATOR, 0, nullptr);
+    for (size_t i = 0; i < legacy_models_.size(); ++i) {
+      const std::wstring label = ToWide(legacy_models_[i]) + L" (旧格式)";
+      AppendMenuW(models, MF_STRING, kCmdLegacyBase + static_cast<UINT>(i), label.c_str());
+    }
   }
   AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(models), L"切换模型");
 
@@ -187,6 +205,15 @@ LRESULT CALLBACK TrayIcon::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       const size_t n = self->models_.size();
       if (cmd >= kCmdModelBase && cmd < kCmdModelBase + n) {
         if (self->cb_wnd_) PostMessage(self->cb_wnd_, kModelSwitchMsg, cmd - kCmdModelBase, 0);
+        return 0;
+      }
+      // 旧格式模型点击:仅提示不支持,不触发加载(2.x 与 3.0 格式不兼容)。
+      const size_t ln = self->legacy_models_.size();
+      if (cmd >= kCmdLegacyBase && cmd < kCmdLegacyBase + ln) {
+        MessageBoxW(self->hwnd_,
+                    L"该模型为旧版 Cubism 2.x 格式,本程序暂不支持加载。\n"
+                    L"请使用 Live2D 官方转换器将其转换为 Cubism 3.0 后再放入 assets 目录。",
+                    L"旧格式模型", MB_ICONINFORMATION);
         return 0;
       }
       switch (cmd) {

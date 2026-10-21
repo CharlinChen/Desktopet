@@ -36,7 +36,8 @@ class TrayIcon {
   static constexpr UINT kCmdMouseFollow = 3;
   static constexpr UINT kCmdWander = 4;
   static constexpr UINT kCmdRandomAnimation = 5;
-  static constexpr UINT kCmdModelBase = 100;  // 模型菜单项 ID 从 100 起(下标 = id - base)
+  static constexpr UINT kCmdModelBase = 100;   // 模型菜单项 ID 从 100 起(下标 = id - base)
+  static constexpr UINT kCmdLegacyBase = 1000; // 旧格式模型菜单项 ID(下标 = id - base)
 
   HWND hwnd_ = nullptr;     // 隐藏的托盘回调窗口
   HWND cb_wnd_ = nullptr;   // 主窗口(切换模型/关闭目标)
@@ -45,6 +46,7 @@ class TrayIcon {
   bool mouse_follow_ = false;         // 鼠标追随开关内存态(打勾)
   bool wander_ = true;                // 随机移动开关内存态(打勾)
   bool random_animation_ = true;      // 随机动画开关内存态(打勾)
-  std::vector<std::string> models_;  // 当前模型目录名(弹出菜单时刷新)
-  std::string current_model_;        // 已选中模型目录名(打勾)
+  std::vector<std::string> models_;        // 当前(3.0)模型目录名(弹出菜单时刷新)
+  std::vector<std::string> legacy_models_; // 旧格式模型目录名(弹出菜单时刷新)
+  std::string current_model_;              // 已选中模型目录名(打勾)
 };

@@ -10,5 +10,8 @@ constexpr UINT kModelSwitchMsg = WM_APP + 2;
 
 // 枚举 exe 旁 assets/ 下所有含 *.model3.json 的模型目录名(升序)。
 std::vector<std::string> ListModels();
+// 枚举 exe 旁 assets/ 下旧版 Cubism 2.x 格式(*.model.json 且无 *.model3.json)的模型目录名(升序)。
+// 这类模型本程序无法加载,仅列在托盘菜单里;点击时提示用户用官方转换器转 3.0。
+std::vector<std::string> ListLegacyModels();
 // 模型目录绝对路径(exe 旁 assets/<name>,无尾斜杠)。
 std::string ModelDir(const std::string& name);
