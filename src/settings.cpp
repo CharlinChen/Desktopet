@@ -1,6 +1,7 @@
 #include "settings.h"
+#include "utf8_file.h"
 
-#include <fstream>
+#include <cstdio>
 #include <map>
 #include <string>
 
@@ -53,23 +54,26 @@ void LoadOnce() {
   st.loaded = true;
 
   // Key=Value 行;空行/注释('#' 开头)/无 '=' 行跳过。
-  std::ifstream f(ExeDir() + kCfgName);
-  std::string line;
-  while (std::getline(f, line)) {
+  FILE* f = utf8::Fopen(ExeDir() + kCfgName, "rt");
+  if (!f) return;
+  char line[4096];
+  while (fgets(line, sizeof line, f)) {
     const std::string t = Trim(line);
     if (t.empty() || t[0] == '#') continue;
     const size_t eq = t.find('=');
     if (eq == std::string::npos) continue;
     st.kv[Trim(t.substr(0, eq))] = Trim(t.substr(eq + 1));
   }
+  fclose(f);
 }
 
 // 全量写盘(按 key 排序)。未知键保留在内存映射里,不会因扩展格式而丢失。
 void SaveNow() {
   const State& st = S();
-  std::ofstream f(ExeDir() + kCfgName, std::ios::trunc);
+  FILE* f = utf8::Fopen(ExeDir() + kCfgName, "wt");
   if (!f) return;
-  for (const auto& kv : st.kv) f << kv.first << "=" << kv.second << "\n";
+  for (const auto& kv : st.kv) fprintf(f, "%s=%s\n", kv.first.c_str(), kv.second.c_str());
+  fclose(f);
 }
 
 }  // namespace

@@ -7,6 +7,7 @@
 #include "splash.h"
 #include "tray.h"
 #include "window.h"
+#include "utf8_file.h"
 
 #ifdef HAVE_LIVE2D_SDK
 #include "model_live2d.h"
@@ -34,7 +35,7 @@ static void DumpError(const char* what, const char* msg) {
     }
   }
   log += "startup_error.log";
-  FILE* f = fopen(log.c_str(), "a");
+  FILE* f = utf8::Fopen(log, "a");
   if (f) {
     fprintf(f, "%s: %s\n", what, msg);
     fclose(f);

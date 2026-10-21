@@ -29,6 +29,7 @@
 
 #include "behavior.h"
 #include "com_ptr.h"
+#include "utf8_file.h"
 
 // Live2D 模型加载器:模型、贴图、运动、物理、呼吸、眨眼,并做 D3D11 渲染。
 // 参考 SDK Samples/D3D11/Demo 的 LAppModel / LAppPal / LAppTextureManager,但剥离
@@ -42,7 +43,7 @@ namespace L2D = Live2D::Cubism::Framework;
 static const std::string& ExeDir();
 
 static void LogLine(const char* what, const char* msg) {
-  FILE* f = fopen((ExeDir() + "live2d_error.log").c_str(), "a");
+  FILE* f = utf8::Fopen(ExeDir() + "live2d_error.log", "a");
   if (f) {
     fprintf(f, "%s: %s\n", what, msg);
     fclose(f);
@@ -90,13 +91,19 @@ static std::string ResolvePath(const std::string& p) {
 }
 
 static std::string ReadFileBytes(const std::string& path, size_t* size) {
-  std::ifstream f(ResolvePath(path), std::ios::binary | std::ios::ate);
+  FILE* f = utf8::Fopen(ResolvePath(path), "rb");
   if (!f) return {};
-  const std::streamoff n = f.tellg();
-  f.seekg(0, std::ios::beg);
+  fseek(f, 0, SEEK_END);
+  const long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (n <= 0) {
+    fclose(f);
+    return {};
+  }
   std::string buf(static_cast<size_t>(n), '\0');
-  f.read(&buf[0], n);
-  if (f.gcount() != n) return {};
+  const size_t got = fread(&buf[0], 1, static_cast<size_t>(n), f);
+  fclose(f);
+  if (got != static_cast<size_t>(n)) return {};
   if (size) *size = static_cast<size_t>(n);
   return buf;
 }
@@ -131,7 +138,7 @@ static L2D::csmByte* CubismLoadFile(const std::string path, L2D::csmSizeInt* out
 static void CubismReleaseBytes(L2D::csmByte* data) { CSM_FREE(data); }
 
 static void CubismLog(const char* msg) {
-  FILE* f = fopen((ExeDir() + "pet_live2d.log").c_str(), "a");
+  FILE* f = utf8::Fopen(ExeDir() + "pet_live2d.log", "a");
   if (f) {
     fprintf(f, "%s\n", msg);
     fclose(f);
